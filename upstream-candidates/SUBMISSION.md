@@ -17,6 +17,56 @@ All submissions by this author, across every list lore archives:
 Review queue for the PCI subsystem:
 <https://patchwork.kernel.org/project/linux-pci/list/>
 
+## What of the series can be submitted at all
+
+The 7.1.9 series is 21 patches. **Six are ours. Fifteen are not, and cannot be
+sent by us.**
+
+| # | Patch | Author | Upstream path |
+|---|---|---|---|
+| 0001 | cachyos bore scheduler | Piotr Gorski | CachyOS |
+| 0002 | xanmod bbr3 | Oleksandr Natalenko | XanMod |
+| 0003-0007, 0010-0013 | xanmod zen tunings | Alexandre Frade | XanMod |
+| 0008 | zen dm-crypt wq | Steven Barrett | Liquorix |
+| 0009 | zen evdev rcu | Kenny Levinsen | XanMod |
+| 0014 | tkg pci pme timeout | Arjan van de Ven | TKG / Clear Linux |
+| 0018 | tkg pci acs override | Mark Weiman | TKG |
+| **0015** | nvme APST default | **ours** | outbox |
+| **0016** | THP defrag default | **ours** | outbox |
+| **0017** | kbuild UBSAN extmod | **ours** | outbox |
+| **0019** | dma-buf priority hint | **ours** | outbox, RFC |
+| **0020** | dma-buf compressed descriptor | **ours** | held, see below |
+| **0021** | PCI/sysfs docs | **ours** | **sent 2026-08-20** |
+
+Submitting the fifteen under our name would be misattribution, which is the
+thing `tests/test_patch_authorship.py` exists to prevent. They are also not
+ours to relicense, re-date, or speak for in review , if a maintainer asks why
+BORE behaves a certain way, the honest answer is that we did not write it.
+
+Several of them are additionally not *wanted* upstream by their own authors:
+the XanMod and CachyOS tunings are deliberate downstream divergence, carried
+precisely because mainline chose different defaults. TKG's ACS override has
+been proposed to LKML repeatedly over more than a decade and declined each
+time, for reasons that have not changed.
+
+**They are still published**, and that is the part that satisfies "publish
+everything we use". The public collection carries all 21 with attribution
+intact and no claim that any was accepted upstream. That is a different and
+weaker claim than LKML submission, and it is the correct one for work that is
+not ours.
+
+## Readiness for 0015 and 0016 (2026-08-20)
+
+Both were regenerated from real commits on this date. Before that they were
+hand-written files carrying fabricated blob hashes and a placeholder date,
+which `git apply` tolerates and a maintainer would not.
+
+They are the weakest two of our six: neither fixes a bug, and each changes a
+compiled-in default that is already reachable at runtime through the exact
+mechanism its own commit message cites. Sending them is defensible, but only
+with the missing measurement stated up front , `outbox/SEND.md` records what
+each one would need to become persuasive rather than merely reasoned.
+
 ## Readiness for 0019 and 0020 (2026-08-18)
 
 `docs/ferran_custom_patches/PUBLISHING.md` covers the mechanics: LKML via `b4`

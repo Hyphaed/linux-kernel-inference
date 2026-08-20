@@ -1,8 +1,12 @@
 # Outbox , ready to send, not sent
 
-Two patches left. `0021` was sent to linux-pci on 2026-08-20 and now lives in
-`../sent/`; its message-id is recorded in `../SUBMISSION.md`. `0020` is
-deliberately not here at all; same file explains why.
+Four patches. `0021` was sent to linux-pci on 2026-08-20 and now lives in
+`../sent/`; its message-id is in `../SUBMISSION.md`. `0020` is deliberately not
+here at all; same file explains why.
+
+**Only six of the twenty-one patches in this series are ours.** The other
+fifteen are CachyOS, XanMod, Liquorix and TKG work carried with their original
+authorship, and they are not ours to submit , see `../SUBMISSION.md`.
 
 Each was verified against the kernel's own gates on the 7.1 tree in `linux/`.
 
@@ -13,9 +17,14 @@ matching `Signed-off-by:`, enforced by `tests/test_patch_authorship.py`.
 
 | Patch | checkpatch | What it is | Send as |
 |---|---|---|---|
-| `0021-pci-sysfs-document-link-speed-width-attrs.patch` | 0 errors, 1 warning (see below) | Documentation only, no behaviour change | `PATCH` |
+| `0021-pci-sysfs-document-link-speed-width-attrs.patch` | 0 errors, 1 warning (see below) | Documentation only, no behaviour change | `PATCH` , **sent** |
 | `0017-kbuild-ubsan-extmod-opt-in.patch` | clean, "ready for submission" | Bug fix | `PATCH` |
+| `0015-nvme-lower-default-apst-latency.patch` | clean | Default change, no measurement | `PATCH` , weak |
+| `0016-mm-thp-defrag-defer-madvise-default.patch` | clean | Default change, no measurement | `PATCH` , weak |
 | `0019-dma-buf-priority-hint.patch` | clean, "ready for submission" | New UAPI, contested | `RFC PATCH` |
+
+Send in that order. It is ascending order of how much argument each one will
+attract, which is also the order that builds the most credibility per reply.
 
 The one remaining `0021` warning is on its commit-reference line:
 
@@ -108,7 +117,65 @@ Expect to be asked for the reproducer. The answer is VMware `vmnet`/`vmmon`:
 builds clean, loads clean, then fails packet forwarding at runtime because it
 inherited UBSAN flags it never asked for.
 
-## 3. `0019` , dma-buf priority hint (RFC)
+## 3. `0015` , NVMe APST default, and `0016` , THP defrag default
+
+Both were regenerated on 2026-08-20 and were **not submittable before that**.
+They had been hand-written rather than produced by `git format-patch`: fake
+blob hashes (`index 1111111..2222222`), a placeholder
+`Date: Mon, 01 Jan 2024 00:00:00`, no `From <sha>` header, and a private
+`Forward-Port-Notes:` trailer sitting above the `---` where `git am` would have
+carried it into the commit message. They now come from real commits on a clean
+7.1 base and are checkpatch-clean.
+
+    git send-email \
+      --to="Keith Busch <kbusch@kernel.org>" \
+      --to="Jens Axboe <axboe@kernel.dk>" \
+      --to="Christoph Hellwig <hch@lst.de>" \
+      --to="Sagi Grimberg <sagi@grimberg.me>" \
+      --cc=linux-nvme@lists.infradead.org \
+      --cc=linux-kernel@vger.kernel.org \
+      0015-nvme-lower-default-apst-latency.patch
+
+    git send-email \
+      --to="Andrew Morton <akpm@linux-foundation.org>" \
+      --to="David Hildenbrand <david@kernel.org>" \
+      --to="Lorenzo Stoakes <ljs@kernel.org>" \
+      --cc="Zi Yan <ziy@nvidia.com>" \
+      --cc="Baolin Wang <baolin.wang@linux.alibaba.com>" \
+      --cc="Ryan Roberts <ryan.roberts@arm.com>" \
+      --cc="Barry Song <baohua@kernel.org>" \
+      --cc=linux-mm@kvack.org \
+      --cc=linux-kernel@vger.kernel.org \
+      0016-mm-thp-defrag-defer-madvise-default.patch
+
+**Expect these two to be the hardest sell in the series, and know why before
+you send them.** Neither fixes a bug. Each changes a compiled-in default that
+is already runtime-tunable by the very mechanism its own commit message points
+at , a module parameter for `0015`, a sysfs knob for `0016`. The standing
+answer to that shape of patch is "your machine can already set this, so set
+it", and it is a fair answer.
+
+What would change the outcome is evidence, and we do not have it yet:
+
+- `0015` needs a cold-read latency distribution on a device whose deepest
+  non-operational state actually approaches the 100ms bound, at both settings.
+  Without it the 25ms figure is a preference, not a finding. Worth knowing that
+  the number is also device-dependent , on an SSD whose deepest state exits in
+  5ms the patch changes nothing at all, which is an argument the list will
+  make.
+- `0016` needs fault-latency percentiles under memory pressure with
+  `transparent_hugepage=always`, at `madvise` versus `defer+madvise`. The
+  argument in the commit message (that the Kconfig choice is about *whether*,
+  not *how hard*, and the two got conflated) is the genuinely interesting part
+  and stands on its own reasoning , but a stall measurement is what makes it
+  land.
+
+Send them anyway if you want the reviewer's read on the reasoning; just lead
+with the missing measurement rather than waiting to be asked, exactly as
+`0019` leads with its missing in-tree user. An author who marks their own
+evidence gap gets engagement; one who is caught in it gets ignored.
+
+## 4. `0019` , dma-buf priority hint (RFC)
 
 Send **last**, and only once the two above have landed or at least been
 received without mail problems. This is new UAPI and it will be argued about.

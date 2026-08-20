@@ -61,7 +61,7 @@
 0012-tkg-pci-pme-timeout.patch             file://$KI_ROOT/patches/custom/0014-tkg-pci-pme-timeout.patch  96b7670e0d5bcf01ff2333a743e86f340638390d6ad8966368e64ec323b08beb  local-file
 0013-nvme-lower-default-apst-latency.patch file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch  23b1420a902d48f877fffdef6f0a98349f7847278b3bea25a1a40a63ce3434c3  local-file
 0014-mm-thp-defrag-defer-madvise-default.patch file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch  328bf8de4d418904ae3a98834c792ab3fb15ebfa39b1e734807ce03dac3823e2  local-file
-0015-kbuild-ubsan-extmod-opt-in.patch          file://$KI_ROOT/patches/kernel-org-7.1/0015-kbuild-ubsan-extmod-opt-in.patch  2bb001635efafa4f342f7feb7c5d5e3964aec8c7cd29564aa40af8e8d168c793  local-file
+0015-kbuild-ubsan-extmod-opt-in.patch          file://$KI_ROOT/patches/kernel-org-7.1/0015-kbuild-ubsan-extmod-opt-in.patch  3ba3cd7d30dd44abf8807c96de5273c4a632b65d9591c9e87feb602d4b0a07fa  local-file
 
 # ─── TKG: PCIe ACS override (forward-ported to 7.1.3, 2026-07-09) ───────────
 # Original 7.1.1-era patch hand-edited hunk counts and had context anchored

@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ferran Duarri <ferran.duarri@me.com>
+Date: Thu, 20 Aug 2026 20:49:25 +0200
+Subject: [PATCH] mm: thp: default defrag mode to defer+madvise
+
+transparent_hugepage_flags unconditionally sets
+TRANSPARENT_HUGEPAGE_DEFRAG_REQ_MADV_FLAG, so the built-in defrag mode
+is always "madvise" regardless of which of CONFIG_TRANSPARENT_HUGEPAGE_
+ALWAYS or _MADVISE was selected. Those Kconfig options choose whether
+THP is applied by default; they do not express a preference about how
+hard the allocator should work to produce a huge page, yet the defrag
+default is pinned as if they did.
+
+In "madvise" mode a fault on a MADV_HUGEPAGE region performs direct
+compaction in the fault path. Paired with transparent_hugepage=madvise
+that is a bounded cost, since only regions that asked for it are
+affected. Paired with transparent_hugepage=always every anonymous fault
+becomes eligible, and under memory pressure the faulting thread can
+stall in compaction.
+
+"defer+madvise" keeps the same set of regions eligible for huge pages
+and the same allocation attempt, but on failure it wakes kswapd and
+khugepaged to compact in the background instead of doing it inline. The
+fault proceeds with small pages and the region is collapsed later. This
+is the configuration long recommended to users running THP=always with
+large anonymous working sets, and it is a strictly weaker stall
+guarantee to make the default.
+
+This changes only the compiled-in default;
+/sys/kernel/mm/transparent_hugepage/defrag continues to accept every
+existing mode, including the current "madvise" behaviour.
+
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
+---
+ mm/huge_memory.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index b118bcd392cb..749f669cca56 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -63,7 +63,7 @@ unsigned long transparent_hugepage_flags __read_mostly =
+ #ifdef CONFIG_TRANSPARENT_HUGEPAGE_MADVISE
+ 	(1<<TRANSPARENT_HUGEPAGE_REQ_MADV_FLAG)|
+ #endif
+-	(1<<TRANSPARENT_HUGEPAGE_DEFRAG_REQ_MADV_FLAG)|
++	(1<<TRANSPARENT_HUGEPAGE_DEFRAG_KSWAPD_OR_MADV_FLAG)|
+ 	(1<<TRANSPARENT_HUGEPAGE_DEFRAG_KHUGEPAGED_FLAG)|
+ 	(1<<TRANSPARENT_HUGEPAGE_USE_ZERO_PAGE_FLAG);
+ 

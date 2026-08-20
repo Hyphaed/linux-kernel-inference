@@ -1,5 +1,5 @@
 From b2c8fd0de75d97644d5673cd224716a88b37ae98 Mon Sep 17 00:00:00 2001
-From: Ferran <ferran.duarri@me.com>
+From: Ferran Duarri <ferran.duarri@me.com>
 Date: Sun, 28 Jun 2026 16:16:07 +0200
 Subject: [PATCH] kbuild: ubsan: skip UBSAN for external modules by default
 
@@ -15,6 +15,7 @@ fallback when KBUILD_EXTMOD is set. External modules that explicitly
 need UBSAN can still opt in by setting UBSAN_SANITIZE := y.
 
 In-kernel module builds are not affected.
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
 ---
  scripts/Makefile.lib | 4 ++--
  1 file changed, 2 insertions(+), 2 deletions(-)

@@ -37,9 +37,31 @@ REPO = Path(__file__).resolve().parents[1]
 AUTHOR = "Ferran Duarri <ferran.duarri@me.com>"
 SOB = f"Signed-off-by: {AUTHOR}"
 
-# Ours. Everything else under patches/ is somebody else's work.
-OURS = sorted((REPO / "patches" / "custom").glob("00*.patch")) + sorted(
-    (REPO / "upstream-candidates").glob("*/0001-*.patch"))
+# Ours, decided by CONTENT rather than by location. An earlier version of this
+# globbed two specific directories, and on 2026-08-20 that let three files keep
+# a `From: Ferran <...>` short-name form the rule explicitly forbids , the same
+# patch carried under patches/, patches/kernel-org-7.1/ and patches/xanmod-7.1/
+# was simply outside the glob. Any file we authored is now checked wherever it
+# sits, including the outbox and sent/ copies, which the glob also missed.
+#
+# Selection deliberately matches the ADDRESS only, not the full name: a patch
+# with our address but a malformed name must be SELECTED so it can FAIL below.
+_ADDRESS = "ferran.duarri@"
+
+def _authored_by_us(path: Path) -> bool:
+    for line in path.read_text(errors="replace").splitlines():
+        if line.startswith("From: "):
+            return _ADDRESS in line
+        if line.startswith("---"):
+            break
+    return False
+
+OURS = sorted(
+    p
+    for root in ("patches", "upstream-candidates")
+    for p in (REPO / root).rglob("*.patch")
+    if _authored_by_us(p)
+)
 
 # Third-party patches carried under patches/custom/ because they were
 # forward-ported by us but AUTHORED elsewhere. Named explicitly so the

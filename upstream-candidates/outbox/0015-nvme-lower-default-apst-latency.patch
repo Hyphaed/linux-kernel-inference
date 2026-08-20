@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ferran Duarri <ferran.duarri@me.com>
+Date: Thu, 20 Aug 2026 20:49:11 +0200
+Subject: [PATCH] nvme: lower default APST max latency to 25ms
+
+default_ps_max_latency_us defaults to 100000, which lets APST enter
+non-operational power states whose advertised exit latency is up to
+100ms. On a device whose deepest state sits near that bound, the first
+random read after an idle period pays that wake latency in full.
+
+For interactive and latency-sensitive reads this is visible as a stall
+rather than as reduced throughput, because it is a one-shot cost on a
+cold access rather than a steady-state penalty. The workload that
+prompted this is staging large model weights from NVMe, where a cold
+mmap fault on a multi-gigabyte checkpoint is exactly the access this
+punishes.
+
+25ms still permits APST into the shallower non-operational states, so
+idle power saving is retained, while bounding worst-case wake latency
+to roughly a quarter of the current default.
+
+This changes only the compiled-in default. The value remains writable
+at runtime via the module parameter, settable on the kernel command
+line as nvme_core.default_ps_max_latency_us=, and overridable per
+device through PM QOS, so any system preferring deeper idle states can
+restore the old behaviour without a rebuild.
+
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
+---
+ drivers/nvme/host/core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/nvme/host/core.c b/drivers/nvme/host/core.c
+index c3032d6ad6b1..e3038b880e8b 100644
+--- a/drivers/nvme/host/core.c
++++ b/drivers/nvme/host/core.c
+@@ -66,7 +66,7 @@ static u8 nvme_max_retries = 5;
+ module_param_named(max_retries, nvme_max_retries, byte, 0644);
+ MODULE_PARM_DESC(max_retries, "max number of retries a command may have");
+ 
+-static unsigned long default_ps_max_latency_us = 100000;
++static unsigned long default_ps_max_latency_us = 25000;
+ module_param(default_ps_max_latency_us, ulong, 0644);
+ MODULE_PARM_DESC(default_ps_max_latency_us,
+ 		 "max power saving latency for new devices; use PM QOS to change per device");

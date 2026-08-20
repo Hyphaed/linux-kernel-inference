@@ -18,4 +18,4 @@
 0004-mm-thp-defrag-defer-madvise-default.patch file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch  328bf8de4d418904ae3a98834c792ab3fb15ebfa39b1e734807ce03dac3823e2  local-file
 
 # ─── kbuild: UBSAN opt-in for external modules (VMware/vmnet fix) ─────────────
-0005-kbuild-ubsan-extmod-opt-in.patch  file://$KI_ROOT/patches/xanmod-7.1/0005-kbuild-ubsan-extmod-opt-in.patch  2bb001635efafa4f342f7feb7c5d5e3964aec8c7cd29564aa40af8e8d168c793  local-file
+0005-kbuild-ubsan-extmod-opt-in.patch  file://$KI_ROOT/patches/xanmod-7.1/0005-kbuild-ubsan-extmod-opt-in.patch  3ba3cd7d30dd44abf8807c96de5273c4a632b65d9591c9e87feb602d4b0a07fa  local-file

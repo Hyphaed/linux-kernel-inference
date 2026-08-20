@@ -185,7 +185,7 @@ mentioning if/when this patch is actually sent.
   - `make drivers/gpu/drm/drm_prime.o` — a heavy dma-buf consumer, spot-
     checked in case the new struct field shifted anything importers rely
     on — clean.
-- `Signed-off-by: Ferran <ferran.duarri@me.com>` is real (matches the
+- `Signed-off-by: Ferran Duarri <ferran.duarri@me.com>` is real (matches the
   commit's `Author:`, taken from your git config) — the DCO attestation is
   in place.
 - **Not done** (needs a real boot, not available in this environment):
