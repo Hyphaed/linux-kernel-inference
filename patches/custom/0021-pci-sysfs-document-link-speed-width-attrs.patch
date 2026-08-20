@@ -1,0 +1,114 @@
+From cdc35b2e76dfa39b02e004d5d6d959567269f2a7 Mon Sep 17 00:00:00 2001
+From: Ferran Duarri <ferran.duarri@pm.me>
+Date: Thu, 20 Aug 2026 15:31:54 +0200
+Subject: [PATCH] PCI/sysfs: document the link speed and width attributes
+
+max_link_speed, max_link_width, current_link_speed and current_link_width
+have been exported under /sys/bus/pci/devices/.../ since commit 56c1af4606f0
+("PCI: Add sysfs max_link_speed/width, current_link_speed/width, etc") in
+2018, and none of the four appear anywhere in Documentation/ABI.
+
+The gap matters most for current_link_speed. current_link_speed_show()
+performs a fresh PCI_EXP_LNKSTA read on every open, so the value reflects
+the link state at that instant. Modern GPUs retrain their link continuously
+as part of idle power management, which means a single read can legitimately
+return any speed the link supports, not the speed the link will use under
+load.
+
+Observed on an RTX 5070 in a PCIe 4.0 x16 slot, same boot, no configuration
+change between the two reads: 5.0 GT/s while idle, 16.0 GT/s under load.
+Comparing current_link_speed against max_link_speed at idle is therefore not
+a valid test for a degraded link, though it reads like one.
+
+Document all four attributes, note that the max_* pair is the ceiling
+negotiated between device and platform capability (so an endpoint's own
+capability may be higher than what max_link_speed reports), and state
+explicitly that current_link_speed is instantaneous, that comparing it
+against max_link_speed at idle is not a valid degradation test, and that
+callers wanting a stable figure should sample under load or use the max_*
+attributes.
+
+No functional change.
+
+Forward-Port-Notes: Documentation/ABI/testing/sysfs-bus-pci
+Signed-off-by: Ferran Duarri <ferran.duarri@pm.me>
+---
+ Documentation/ABI/testing/sysfs-bus-pci | 65 +++++++++++++++++++++++++
+ 1 file changed, 65 insertions(+)
+
+diff --git a/Documentation/ABI/testing/sysfs-bus-pci b/Documentation/ABI/testing/sysfs-bus-pci
+index b767db2..ad18bd6 100644
+--- a/Documentation/ABI/testing/sysfs-bus-pci
++++ b/Documentation/ABI/testing/sysfs-bus-pci
+@@ -174,6 +174,71 @@ Description:
+ 		similiar to writing 1 to their individual "reset" file, so use
+ 		with caution.
+ 
++What:		/sys/bus/pci/devices/.../max_link_speed
++Date:		September 2018
++Contact:	linux-pci@vger.kernel.org
++Description:
++		The maximum link speed this device's link can operate at, as a
++		human-readable string such as "16.0 GT/s PCIe". Read from the
++		Max Link Speed field of the device's Link Capabilities register.
++
++		This is the ceiling the link may negotiate, which is the lower
++		of what the two ends of the link support. An endpoint capable of
++		a higher speed than the port above it will report that higher
++		speed here while the port above it reports the lower one, and
++		the link will train at the lower of the two. To reason about a
++		link, read this attribute on both ends.
++
++		Present only for PCI Express devices.
++
++What:		/sys/bus/pci/devices/.../max_link_width
++Date:		September 2018
++Contact:	linux-pci@vger.kernel.org
++Description:
++		The maximum link width this device's link can operate at, in
++		lanes, e.g. "16". Read from the Maximum Link Width field of the
++		device's Link Capabilities register.
++
++		Present only for PCI Express devices.
++
++What:		/sys/bus/pci/devices/.../current_link_speed
++Date:		September 2018
++Contact:	linux-pci@vger.kernel.org
++Description:
++		The speed the link is operating at right now, as a
++		human-readable string such as "16.0 GT/s PCIe". Read fresh from
++		the device's Link Status register on every read of this file;
++		nothing is cached.
++
++		This value is instantaneous and may change at any time. A link
++		is permitted to retrain to a lower speed and back, and devices
++		with aggressive link power management (GPUs in particular) do so
++		routinely while idle. Two reads seconds apart, with no
++		configuration change in between, can legitimately differ by
++		several generations.
++
++		Consequently, comparing this attribute against max_link_speed is
++		not by itself a test for a degraded link: an idle device will
++		frequently report a lower speed and is working correctly.
++		Callers that need a figure representing what the link will
++		actually deliver should sample while the device is under load,
++		or use max_link_speed if what they want is the ceiling.
++
++		Present only for PCI Express devices.
++
++What:		/sys/bus/pci/devices/.../current_link_width
++Date:		September 2018
++Contact:	linux-pci@vger.kernel.org
++Description:
++		The width the link is operating at right now, in lanes, e.g.
++		"16". Read fresh from the device's Link Status register on every
++		read of this file.
++
++		As with current_link_speed, this is instantaneous. Links may
++		also narrow and re-widen under link power management.
++
++		Present only for PCI Express devices.
++
+ What:		/sys/bus/pci/devices/.../vpd
+ Date:		February 2008
+ Contact:	Ben Hutchings <bwh@kernel.org>

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hyphaed"
+version = "0.1.0"
+description = "Custom Linux kernel build wizard for AI inference + Steam/Proton + VMware on Intel hybrid + NVIDIA workstations"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "ferran", email = "ferran@turingprojects.com" }]
+license = { text = "MIT" }
+dependencies = [
+  "rich>=13.7",
+  "pyyaml>=6.0",
+]
+
+[project.scripts]
+hyphaed = "hyphaed.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["hyphaed*"]

@@ -1,0 +1,21 @@
+# Pinned sources for patches/xanmod-7.1/series.
+# Same format as patches/VENDOR.lock.
+#
+# Generated 2026-06-28 from local clones:
+#   github/linux @ 7.1.2-xanmod1 (74edfbf88678)
+#   kernel-patches @ master (7.1/sched/0001-bore.patch present)
+#
+# xanmod 7.1.2 already contains: BBRv3, zen tunings (vmscan/vfs/map-count/
+# 500hz/dm-crypt/evdev), block tunings (wbt/rq-affinity/mq-deadline),
+# ACS overrides. Only BORE + custom patches applied here.
+
+# ─── CachyOS: BORE scheduler (7.1-targeted) ──────────────────────────────────
+0001-cachyos-bore-scheduler.patch  file://$KI_ROOT/kernel-patches/7.1/sched/0001-bore.patch  e4c97e5a780f944a336a1c2e43b8267a70a542ccc83d9429ebd4260ab1a1ffe9  local-file
+
+# ─── Custom: workstation-specific defaults ────────────────────────────────────
+0002-tkg-pci-pme-timeout.patch             file://$KI_ROOT/patches/custom/0014-tkg-pci-pme-timeout.patch  96b7670e0d5bcf01ff2333a743e86f340638390d6ad8966368e64ec323b08beb  local-file
+0003-nvme-lower-default-apst-latency.patch file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch  50c1f5777237cdc0de68eeeb2d39b7af9b38340461bf8cfeb8e90c915254dd99  local-file
+0004-mm-thp-defrag-defer-madvise-default.patch file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch  526a9e594d94a24ffabf237219eb2f3c94c82654153c6c4edf7c82e035215a17  local-file
+
+# ─── kbuild: UBSAN opt-in for external modules (VMware/vmnet fix) ─────────────
+0005-kbuild-ubsan-extmod-opt-in.patch  file://$KI_ROOT/patches/xanmod-7.1/0005-kbuild-ubsan-extmod-opt-in.patch  2bb001635efafa4f342f7feb7c5d5e3964aec8c7cd29564aa40af8e8d168c793  local-file

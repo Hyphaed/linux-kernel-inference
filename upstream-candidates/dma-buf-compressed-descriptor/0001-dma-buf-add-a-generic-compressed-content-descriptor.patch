@@ -1,0 +1,305 @@
+From 1fee0565022c6d2ecab51baa04a728f3df3baacb Mon Sep 17 00:00:00 2001
+From: Ferran <ferran.duarri@me.com>
+Date: Mon, 10 Aug 2026 13:11:13 +0200
+Subject: [RFC PATCH] dma-buf: add a generic compressed-content descriptor
+
+dma-buf has no generic mechanism for an exporter that has compressed a
+buffer's backing memory in place to tell an importer how to inflate
+it. Pages pinned via pin_user_pages()/FOLL_LONGTERM sit outside the
+normal reclaim path by design, so a memory-tiering allocator that
+wants to keep a cold buffer's contents compressed rather than evicting
+and later re-fetching it currently has no shared place to publish
+"this buffer is compressed, here is how to read it back."
+
+This is a real, recurring gap, and it compounds with an existing one:
+an out-of-tree GPU memory-tiering driver we've been using
+(GreenBoost) already carries the reclaim-priority hint added by the
+sibling RFC in this series (0019, "dma-buf: add a generic
+reclaim-priority hint"). That patch lets an exporter say which
+buffers to keep; this one lets an exporter that has chosen to keep a
+buffer say "compressed, not evicted" instead of paying a full
+re-fetch over the host<->device interconnect on every promotion.
+Neither hint requires the other, but they are motivated by the same
+gap and the same working consumer, and this patch is authored on top
+of 0019 in this series so the two apply together.
+
+Add one small, opt-in descriptor instead of another private channel:
+
+  - struct dma_buf gains a `compression` field (three plain members:
+    codec, block_size, uncompressed_size) guarded by a dedicated
+    `compression_lock` spinlock, defaulting to DMA_BUF_CODEC_NONE
+    (uncompressed) via the existing kzalloc() in dma_buf_export(). A
+    dedicated lock rather than reusing name_lock: the descriptor is
+    three fields that must be read back as a consistent group, a torn
+    read could pair one codec's block_size with another codec's
+    uncompressed_size, which the existing single-field priority hint
+    does not need to guard against.
+
+  - dma_buf_set_compression()/dma_buf_get_compression(), exported
+    under the DMA_BUF symbol namespace, so any dma-buf exporter
+    (in-tree or an out-of-tree module) can publish/read it directly.
+
+  - DMA_BUF_IOCTL_SET_COMPRESSION / DMA_BUF_IOCTL_GET_COMPRESSION so
+    userspace holding an fd can do the same. Numbered 6/7 (not 4/5)
+    because 0019 in this same series already claims those for its own
+    ioctls.
+
+  - The current descriptor is reported via fdinfo
+    (`compression: codec=... block_size=... uncompressed_size=...`),
+    omitted when the buffer is uncompressed, next to the existing
+    size/name/exp_name fields.
+
+@codec is an opaque identifier, the kernel does not interpret it,
+exporter and importer agree on its meaning out of band, the same way
+DRM_FORMAT_MODIFIER or a V4L2 pixel format fourcc works. This patch
+defines no codec values beyond DMA_BUF_CODEC_NONE (0); assigning real
+codec identifiers is left to a follow-up once real out-of-tree users
+exist to agree on a shared registry, matching how DRM format
+modifiers were not all pre-allocated on day one either.
+
+This is deliberately metadata only: dma-buf core stores and reports
+the descriptor, it implements no compression or decompression of its
+own, and it changes no behavior for any existing exporter or importer
+that doesn't opt in. No existing dma_buf_ops callback is touched.
+Compile-tested (drivers/dma-buf/dma-buf.o) stacked on top of the full
+0001-0019 series against a real 7.1.8 kernel-org tree.
+
+Signed-off-by: Ferran <ferran.duarri@me.com>
+---
+ drivers/dma-buf/dma-buf.c    | 72 ++++++++++++++++++++++++++++++++++++
+ include/linux/dma-buf.h      | 42 +++++++++++++++++++++
+ include/uapi/linux/dma-buf.h | 41 ++++++++++++++++++++
+ 3 files changed, 155 insertions(+)
+
+diff --git a/drivers/dma-buf/dma-buf.c b/drivers/dma-buf/dma-buf.c
+index 1b1d3ee77..82bbd6433 100644
+--- a/drivers/dma-buf/dma-buf.c
++++ b/drivers/dma-buf/dma-buf.c
+@@ -465,6 +465,47 @@ unsigned int dma_buf_get_priority(struct dma_buf *dmabuf)
+ }
+ EXPORT_SYMBOL_NS_GPL(dma_buf_get_priority, "DMA_BUF");
+ 
++/**
++ * dma_buf_set_compression - Publish a compressed-content descriptor.
++ * @dmabuf:             [in] buffer to update.
++ * @codec:              [in] DMA_BUF_CODEC_* identifier, or
++ *                            DMA_BUF_CODEC_NONE to mark it uncompressed
++ *                            again.
++ * @block_size:         [in] compression block size in bytes, 0 for
++ *                            whole-buffer.
++ * @uncompressed_size:  [in] size in bytes once decompressed.
++ *
++ * Metadata only, dma-buf core stores and reports it, it never compresses
++ * or decompresses anything itself. The three fields are updated together
++ * under @compression_lock so an importer never observes a torn read
++ * pairing one codec's block_size with another's uncompressed_size.
++ */
++void dma_buf_set_compression(struct dma_buf *dmabuf, u32 codec,
++			     u32 block_size, u64 uncompressed_size)
++{
++	spin_lock(&dmabuf->compression_lock);
++	dmabuf->compression.codec = codec;
++	dmabuf->compression.block_size = block_size;
++	dmabuf->compression.uncompressed_size = uncompressed_size;
++	spin_unlock(&dmabuf->compression_lock);
++}
++EXPORT_SYMBOL_NS_GPL(dma_buf_set_compression, "DMA_BUF");
++
++/**
++ * dma_buf_get_compression - Read back the compressed-content descriptor.
++ * @dmabuf: [in]  buffer to query.
++ * @out:    [out] filled with the current descriptor (all-zero / CODEC_NONE
++ *                if dma_buf_set_compression() was never called).
++ */
++void dma_buf_get_compression(struct dma_buf *dmabuf,
++			     struct dma_buf_compression_hint *out)
++{
++	spin_lock(&dmabuf->compression_lock);
++	*out = dmabuf->compression;
++	spin_unlock(&dmabuf->compression_lock);
++}
++EXPORT_SYMBOL_NS_GPL(dma_buf_get_compression, "DMA_BUF");
++
+ #if IS_ENABLED(CONFIG_SYNC_FILE)
+ static long dma_buf_export_sync_file(struct dma_buf *dmabuf,
+ 				     void __user *user_data)
+@@ -576,6 +617,7 @@ static long dma_buf_ioctl(struct file *file,
+ 	struct dma_buf *dmabuf;
+ 	struct dma_buf_sync sync;
+ 	struct dma_buf_priority prio;
++	struct dma_buf_compression comp;
+ 	enum dma_data_direction direction;
+ 	int ret;
+ 
+@@ -629,6 +671,26 @@ static long dma_buf_ioctl(struct file *file,
+ 			return -EFAULT;
+ 		return 0;
+ 
++	case DMA_BUF_IOCTL_SET_COMPRESSION:
++		if (copy_from_user(&comp, (void __user *)arg, sizeof(comp)))
++			return -EFAULT;
++		dma_buf_set_compression(dmabuf, comp.codec, comp.block_size,
++					comp.uncompressed_size);
++		return 0;
++
++	case DMA_BUF_IOCTL_GET_COMPRESSION: {
++		struct dma_buf_compression_hint hint;
++
++		dma_buf_get_compression(dmabuf, &hint);
++		memset(&comp, 0, sizeof(comp));
++		comp.codec = hint.codec;
++		comp.block_size = hint.block_size;
++		comp.uncompressed_size = hint.uncompressed_size;
++		if (copy_to_user((void __user *)arg, &comp, sizeof(comp)))
++			return -EFAULT;
++		return 0;
++	}
++
+ #if IS_ENABLED(CONFIG_SYNC_FILE)
+ 	case DMA_BUF_IOCTL_EXPORT_SYNC_FILE:
+ 		return dma_buf_export_sync_file(dmabuf, (void __user *)arg);
+@@ -649,6 +711,15 @@ static void dma_buf_show_fdinfo(struct seq_file *m, struct file *file)
+ 	/* Don't count the temporary reference taken inside procfs seq_show */
+ 	seq_printf(m, "count:\t%ld\n", file_count(dmabuf->file) - 1);
+ 	seq_printf(m, "exp_name:\t%s\n", dmabuf->exp_name);
++	{
++		struct dma_buf_compression_hint hint;
++
++		dma_buf_get_compression(dmabuf, &hint);
++		if (hint.codec != DMA_BUF_CODEC_NONE)
++			seq_printf(m, "compression:\tcodec=%u block_size=%u uncompressed_size=%llu\n",
++				  hint.codec, hint.block_size,
++				  hint.uncompressed_size);
++	}
+ 	spin_lock(&dmabuf->name_lock);
+ 	if (dmabuf->name)
+ 		seq_printf(m, "name:\t%s\n", dmabuf->name);
+@@ -797,6 +868,7 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info)
+ 	dmabuf->size = exp_info->size;
+ 	dmabuf->exp_name = exp_info->exp_name;
+ 	dmabuf->owner = exp_info->owner;
++	spin_lock_init(&dmabuf->compression_lock);
+ 	spin_lock_init(&dmabuf->name_lock);
+ 	atomic_set(&dmabuf->priority, DMA_BUF_PRIORITY_DEFAULT);
+ 	init_waitqueue_head(&dmabuf->poll);
+diff --git a/include/linux/dma-buf.h b/include/linux/dma-buf.h
+index b3d3f2858..965aa9aa0 100644
+--- a/include/linux/dma-buf.h
++++ b/include/linux/dma-buf.h
+@@ -377,6 +377,44 @@ struct dma_buf {
+ 	 */
+ 	atomic_t priority;
+ 
++	/**
++	 * @compression:
++	 *
++	 * Optional compressed-content descriptor for this buffer's backing
++	 * memory, protected by @compression_lock. Defaults to
++	 * DMA_BUF_CODEC_NONE (uncompressed) and is never set implicitly:
++	 * an exporter that has compressed a buffer's contents in place
++	 * (e.g. to keep more working set resident under memory pressure)
++	 * calls dma_buf_set_compression() to publish @codec,
++	 * @uncompressed_size and @block_size so any importer that
++	 * recognizes @codec knows how to inflate the buffer, instead of
++	 * every subsystem inventing its own private descriptor for the
++	 * same handoff. See include/uapi/linux/dma-buf.h for the codec
++	 * identifier namespace.
++	 *
++	 * This is metadata only: dma-buf core stores and reports it, it
++	 * never compresses or decompresses anything itself, and it changes
++	 * no behavior for any exporter or importer that doesn't opt in.
++	 */
++	struct dma_buf_compression_hint {
++		/** @codec: DMA_BUF_CODEC_* identifier. */
++		u32 codec;
++		/** @block_size: compression block size in bytes, 0 = whole-buffer. */
++		u32 block_size;
++		/** @uncompressed_size: size once decompressed, in bytes. */
++		u64 uncompressed_size;
++	} compression;
++
++	/**
++	 * @compression_lock: Protects @compression. A dedicated spinlock
++	 * rather than reusing @name_lock: @compression is three fields
++	 * that must be read back as a consistent group (a torn read could
++	 * pair one codec's @block_size with another codec's
++	 * @uncompressed_size), which a single atomic_t hint does not need
++	 * to guard against.
++	 */
++	spinlock_t compression_lock;
++
+ 	/**
+ 	 * @owner:
+ 	 *
+@@ -591,6 +629,10 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info);
+ 
+ void dma_buf_set_priority(struct dma_buf *dmabuf, unsigned int priority);
+ unsigned int dma_buf_get_priority(struct dma_buf *dmabuf);
++void dma_buf_set_compression(struct dma_buf *dmabuf, u32 codec,
++			     u32 block_size, u64 uncompressed_size);
++void dma_buf_get_compression(struct dma_buf *dmabuf,
++			     struct dma_buf_compression_hint *out);
+ 
+ int dma_buf_fd(struct dma_buf *dmabuf, int flags);
+ struct dma_buf *dma_buf_get(int fd);
+diff --git a/include/uapi/linux/dma-buf.h b/include/uapi/linux/dma-buf.h
+index 4a1d26e0b..a1d7e7188 100644
+--- a/include/uapi/linux/dma-buf.h
++++ b/include/uapi/linux/dma-buf.h
+@@ -199,6 +199,42 @@ struct dma_buf_priority {
+ #define DMA_BUF_PRIORITY_DEFAULT	128
+ #define DMA_BUF_PRIORITY_MAX		255
+ 
++/**
++ * struct dma_buf_compression - Compressed-content descriptor for a dma-buf
++ *
++ * dma-buf has no generic mechanism for an exporter that has compressed a
++ * buffer's backing memory in place (e.g. a GPU memory-tiering allocator
++ * keeping a cold buffer compressed instead of evicting and later refetching
++ * it) to tell an importer how to inflate it. Every subsystem that wants
++ * this today has to invent its own private descriptor.
++ *
++ * DMA_BUF_IOCTL_SET_COMPRESSION / DMA_BUF_IOCTL_GET_COMPRESSION add one
++ * shared, generic descriptor any dma-buf exporter MAY publish. This is
++ * metadata only: dma-buf core stores and reports it, it never compresses
++ * or decompresses anything itself, and by itself it changes no behavior
++ * for any existing exporter or importer.
++ *
++ * @codec identifies the compression format out of band, the same way
++ * DRM_FORMAT_MODIFIER or a V4L2 pixel format fourcc does: the kernel does
++ * not interpret it, exporter and importer must agree on its meaning by
++ * convention. DMA_BUF_CODEC_NONE (0) means "uncompressed", the default
++ * for every dma-buf that never calls dma_buf_set_compression().
++ */
++struct dma_buf_compression {
++	/** @codec: Codec identifier, DMA_BUF_CODEC_NONE if uncompressed. */
++	__u32 codec;
++	/** @block_size: Compression block size in bytes, 0 = whole-buffer. */
++	__u32 block_size;
++	/** @uncompressed_size: Size once decompressed, in bytes. */
++	__u64 uncompressed_size;
++};
++
++/* @codec value meaning "this buffer's contents are not compressed". Any
++ * other value is an opaque, out-of-band-agreed identifier — the kernel
++ * does not interpret it.
++ */
++#define DMA_BUF_CODEC_NONE		0
++
+ #define DMA_BUF_BASE		'b'
+ #define DMA_BUF_IOCTL_SYNC	_IOW(DMA_BUF_BASE, 0, struct dma_buf_sync)
+ 
+@@ -212,5 +248,10 @@ struct dma_buf_priority {
+ #define DMA_BUF_IOCTL_IMPORT_SYNC_FILE	_IOW(DMA_BUF_BASE, 3, struct dma_buf_import_sync_file)
+ #define DMA_BUF_IOCTL_SET_PRIORITY	_IOW(DMA_BUF_BASE, 4, struct dma_buf_priority)
+ #define DMA_BUF_IOCTL_GET_PRIORITY	_IOR(DMA_BUF_BASE, 5, struct dma_buf_priority)
++/* 4 and 5 above are DMA_BUF_IOCTL_SET_PRIORITY / DMA_BUF_IOCTL_GET_PRIORITY.
++ * Compression uses 6/7 so both apply together without a collision.
++ */
++#define DMA_BUF_IOCTL_SET_COMPRESSION	_IOW(DMA_BUF_BASE, 6, struct dma_buf_compression)
++#define DMA_BUF_IOCTL_GET_COMPRESSION	_IOR(DMA_BUF_BASE, 7, struct dma_buf_compression)
+ 
+ #endif
+-- 
+2.53.0
+

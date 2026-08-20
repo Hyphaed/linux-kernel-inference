@@ -1,0 +1,57 @@
+name: gaming-ai-laptop-amd
+description: |
+  HP OMEN 16 (AMD Ryzen AI 9 365 Strix Point + RTX 5070 Mobile + Radeon 880M iGPU).
+  Tuned for AI inference (CUDA + GreenBoost), Steam/Proton gaming under
+  GNOME+Wayland, VMware VMs, and native AMD platform features (amd-pstate-epp,
+  AMD PMC/PMF power management, NPU, SOF audio). All CPU mitigations ON.
+
+fragments:
+  - 10-preempt-full.config
+  - 11-hz-1000.config
+  - 12-scheduler-bore-scx.config
+  - 14-energy-amd-pstate.config
+  - 20-mitigations-on.config
+  - 21-ai-gpu-mem.config
+  - 30-mm-thp-mglru.config
+  - 31-mm-zswap-zstd.config
+  - 40-iommu-vfio.config
+  - 41-kvm-nested.config
+  - 42-io-uring-bpf.config
+  - 43-ntsync.config
+  - 50-net-bbr-fq.config
+  - 60-nvidia-wayland.config
+  - 62-nouveau-off.config
+  - 63-amdgpu-igpu.config
+  - 83-strixpoint-amd.config
+  - 84-laptop.config
+  - 81-native-cpu-opt.config
+  - 82-strip-unused-modules.config
+  - 70-greenboost-required.config   # MUST be last
+
+cmdline_extra: []
+
+patches:
+  # kernel-org-7.1/series governs patch application in kernel-org mode.
+  # Listed here for documentation and dry-run reporting only.
+  - 0001-cachyos-bore-scheduler.patch
+  - 0002-xanmod-zen-vmscan-swap.patch
+  - 0003-xanmod-zen-vfs-cache.patch
+  - 0004-xanmod-zen-max-map-count.patch
+  - 0005-xanmod-zen-500hz-timer.patch
+  - 0006-xanmod-zen-dm-crypt-wq.patch
+  - 0007-xanmod-zen-evdev-rcu.patch
+  - 0008-xanmod-blk-wbt-latency.patch
+  - 0009-xanmod-blk-rq-affinity.patch
+  - 0010-xanmod-mq-deadline-front-merge.patch
+  - 0011-xanmod-mq-deadline-write-prio.patch
+  - 0012-tkg-pci-pme-timeout.patch
+  - 0013-nvme-lower-default-apst-latency.patch
+  - 0014-mm-thp-defrag-defer-madvise-default.patch
+  - 0015-kbuild-ubsan-extmod-opt-in.patch
+
+dkms_modules:
+  - nvidia-dkms
+  - greenboost
+  - vmware-host-modules
+  - hid-xpadneo
+  - omen-rgb-keyboard

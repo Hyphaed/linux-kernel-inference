@@ -1,0 +1,40 @@
+From: hyphaed workstation tuning <noreply@local>
+Date: Mon, 01 Jan 2024 00:00:00 +0000
+Subject: [PATCH] mm: default THP defrag to defer+madvise instead of madvise
+
+The unconditional default-flags initializer always sets
+TRANSPARENT_HUGEPAGE_DEFRAG_REQ_MADV_FLAG ("madvise" defrag mode),
+regardless of the CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS/MADVISE Kconfig
+choice that controls *whether* THP is used. "madvise" defrag mode runs
+synchronous compaction in the page-fault path for MADV_HUGEPAGE-tagged
+VMAs — fine under transparent_hugepage=madvise, but this workstation's
+ai-only preset switches to transparent_hugepage=always (CUDA pinned
+host buffers, GreenBoost T2 staging), so every anonymous fault becomes
+THP-eligible and can hit synchronous compaction stalls under memory
+pressure from concurrent inference + gaming + VMs.
+
+"defer+madvise" keeps the same allocation behavior but pushes
+compaction to khugepaged/kswapd in the background instead of stalling
+the faulting thread — the standard recommendation for desktops/servers
+running transparent_hugepage=always (matches guidance long given for
+Redis/MongoDB-style THP=always workloads). Runtime-overridable via
+`echo defer+madvise > /sys/kernel/mm/transparent_hugepage/defrag`; this
+patch only changes the compiled-in default.
+
+Forward-Port-Notes: mm/huge_memory.c (transparent_hugepage_flags initializer)
+---
+ mm/huge_memory.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index 1111111..2222222 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -63,6 +63,6 @@ unsigned long transparent_hugepage_flags __read_mostly =
+ #ifdef CONFIG_TRANSPARENT_HUGEPAGE_MADVISE
+ 	(1<<TRANSPARENT_HUGEPAGE_REQ_MADV_FLAG)|
+ #endif
+-	(1<<TRANSPARENT_HUGEPAGE_DEFRAG_REQ_MADV_FLAG)|
++	(1<<TRANSPARENT_HUGEPAGE_DEFRAG_KSWAPD_OR_MADV_FLAG)|
+ 	(1<<TRANSPARENT_HUGEPAGE_DEFRAG_KHUGEPAGED_FLAG)|
+ 	(1<<TRANSPARENT_HUGEPAGE_USE_ZERO_PAGE_FLAG);

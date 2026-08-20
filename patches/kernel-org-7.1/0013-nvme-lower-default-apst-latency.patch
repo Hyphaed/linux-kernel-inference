@@ -1,0 +1,36 @@
+From: hyphaed workstation tuning <noreply@local>
+Date: Mon, 01 Jan 2024 00:00:00 +0000
+Subject: [PATCH] nvme: lower default APST max latency for desktop/workstation use
+
+Default `default_ps_max_latency_us=100000` permits NVMe Autonomous Power
+State Transition into power states with up to 100ms exit latency. On a
+workstation that stages AI model weights and GreenBoost T2/T3 tiering
+data from NVMe (CUDA pinned-memory staging, mmap'd checkpoint loads),
+a 100ms wake spike on a cold random read is directly visible as
+inference stall. Lower the compiled-in default to 25ms — still allows
+APST into shallow power-saving states (idle power draw still drops),
+but bounds worst-case wake latency to something that won't show up as
+a stutter under load.
+
+Runtime-overridable: `echo <N> > /sys/module/nvme_core/parameters/default_ps_max_latency_us`
+or via `nvme_core.default_ps_max_latency_us=<N>` on the cmdline — this
+patch only changes the compiled-in default for the common case.
+
+Forward-Port-Notes: drivers/nvme/host/core.c (module_param default)
+---
+ drivers/nvme/host/core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/nvme/host/core.c b/drivers/nvme/host/core.c
+index 1111111..2222222 100644
+--- a/drivers/nvme/host/core.c
++++ b/drivers/nvme/host/core.c
+@@ -66,7 +66,7 @@ static u8 nvme_max_retries = 5;
+ module_param_named(max_retries, nvme_max_retries, byte, 0644);
+ MODULE_PARM_DESC(max_retries, "max number of retries a command may have");
+
+-static unsigned long default_ps_max_latency_us = 100000;
++static unsigned long default_ps_max_latency_us = 25000;
+ module_param(default_ps_max_latency_us, ulong, 0644);
+ MODULE_PARM_DESC(default_ps_max_latency_us,
+ 		 "max power saving latency for new devices; use PM QOS to change per device");

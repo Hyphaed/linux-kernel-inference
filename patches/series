@@ -1,0 +1,38 @@
+# hyphaed patch series (ordered)
+#
+# Each patch is a `git format-patch` / `git am`-compatible mbox.
+# Add Forward-Port-Notes: and Conflict-Marker: trailers for wizard tooling.
+#
+# Sources pinned in patches/VENDOR.lock.
+# Run `python patches/fetch.py` to populate, `--discover` to (re-)pin shas.
+
+0001-cachyos-bore-scheduler.patch
+0002-xanmod-bbr3.patch
+0003-xanmod-zen-vmscan-swap.patch
+0004-xanmod-zen-vfs-cache.patch
+0005-xanmod-zen-max-map-count.patch
+0006-xanmod-zen-500hz-timer.patch
+0007-xanmod-zen-sched-latency.patch
+0008-xanmod-zen-dm-crypt-wq.patch
+0009-xanmod-zen-evdev-rcu.patch
+0010-xanmod-blk-wbt-latency.patch
+0011-xanmod-blk-rq-affinity.patch
+0012-xanmod-mq-deadline-front-merge.patch
+0013-xanmod-mq-deadline-write-prio.patch
+0014-tkg-pci-pme-timeout.patch
+0015-nvme-lower-default-apst-latency.patch
+0016-mm-thp-defrag-defer-madvise-default.patch
+# 0018-tkg-pci-acs-override dropped 2026-07-09: fails `git am --3way`
+# against a real 7.1.3 kernel-org tree (drivers/pci/quirks.c has drifted
+# too far from this 2018-era patch for even a 3-way base reconstruction —
+# see patches/kernel-org-7.1/series for the full note). Untested against
+# this ubuntu-mode tree specifically, but pulled here too rather than leave
+# an unvalidated patch in the default series.
+custom/0017-kbuild-ubsan-extmod-opt-in.patch
+
+# 0019: local RFC candidate for upstream (not yet sent to LKML — see
+# upstream-candidates/dma-buf-priority-hint/README.md at the repo root
+# for the full writeup + submission walkthrough). Carried here so this
+# machine's own build benefits from the hint immediately, independent of
+# upstream review timelines.
+custom/0019-dma-buf-priority-hint.patch

@@ -1,0 +1,57 @@
+# Pinned local sources for hyphaed patches.
+# Format: <local-patch-name>  <url>  <sha256>  <kind>
+#
+# kind=local-file : bytes read from a file in a local checkout
+#   URL form: file:///abs/path/to/file.patch
+#
+# kind=git-commit : output of `git format-patch -1 --no-signature --stdout <sha>`
+#   URL form: git+file:///abs/repo@<full-commit-sha>
+#
+# sha256 values are pinned for integrity.  To recompute after a source change:
+#   python patches/fetch.py --discover
+# then copy the printed sha values back here.
+
+# ─── CachyOS: BORE scheduler ────────────────────────────────────────────────
+0001-cachyos-bore-scheduler.patch  file://$KI_ROOT/kernel-patches/7.0/sched/0001-bore.patch  8c441563e443c3a75bc408ccba31887d665ac8597483c61e6142b5d72b4ee315  local-file
+
+# ─── XanMod: BBRv3 ──────────────────────────────────────────────────────────
+0002-xanmod-bbr3.patch  git+file://$KI_ROOT/linux@d83a544c4f01  6a40e13c2f24465e1126886bcd04f585cd9c133d51a758022046669820aa60ba  git-commit
+
+# ─── XanMod: zen-style tunings ──────────────────────────────────────────────
+0003-xanmod-zen-vmscan-swap.patch     git+file://$KI_ROOT/linux@2f061659261b  7e426d6bbf2e5dc41fb986161c80f4070416e53b3f13a2caf685ae4f067b80df  git-commit
+0004-xanmod-zen-vfs-cache.patch       git+file://$KI_ROOT/linux@1cf73d1c7caf  5f79569ae8d9cbe66c3a8ceb45af484e4bb6af95b28bc0bf93be0790af9821b8  git-commit
+0005-xanmod-zen-max-map-count.patch   git+file://$KI_ROOT/linux@50199b89d92e  ba424a8e80dc69e83a354fe5ccbb54e75165c0898b0d0e7051c7da84674ee9c0  git-commit
+0006-xanmod-zen-500hz-timer.patch     git+file://$KI_ROOT/linux@8c8dcd0f92a7  15e970d00b9dc6c35df193457894e98fe3362ffc7cf23349a9e6523c75daea7c  git-commit
+0007-xanmod-zen-sched-latency.patch   file://$KI_ROOT/patches/custom/0007-xanmod-zen-sched-latency.patch  3399cf6fd8fd8f94b48538ada342cdeb5b040bae0efddebf791a7393edcf9b8d  local-file
+0008-xanmod-zen-dm-crypt-wq.patch     git+file://$KI_ROOT/linux@c782b4ba9196  fcd3ce6b88ade1c2936b486d28ec22df4ee2a18cd3df53de0182dbd420214249  git-commit
+0009-xanmod-zen-evdev-rcu.patch       git+file://$KI_ROOT/linux@12f2c05b7caf  3cbc4dcc48e561530b77d05ed828d4411a2fb743951b06a4c57d4cf02eb12f9d  git-commit
+
+# ─── XanMod: block / mq-deadline tunings ────────────────────────────────────
+0010-xanmod-blk-wbt-latency.patch        git+file://$KI_ROOT/linux@9dc44341ce90  34ed67046e79059989bcb72897039f1569d48ed0f8e87e66bc433ae432108a9e  git-commit
+0011-xanmod-blk-rq-affinity.patch        git+file://$KI_ROOT/linux@30db2fc23e6c  ac3ecec2e3f32a9c3f0a2c0ed340c8cad0e549367462209483f9d4df4298b867  git-commit
+0012-xanmod-mq-deadline-front-merge.patch git+file://$KI_ROOT/linux@4ada45465ab3  c21be3ab4e502581a69849b69d9c4bd67af0cd99084b949911f394509eb1910f  git-commit
+0013-xanmod-mq-deadline-write-prio.patch  git+file://$KI_ROOT/linux@9864e47792e5  c6df1ac47955c3a6fd6f36dcb3ca1c98b1d4b0a5e9222a7abe715fcf05510c2e  git-commit
+
+# ─── Clear Linux (via TKG): PCI tuning ───────────────────────────────────────
+0014-tkg-pci-pme-timeout.patch  file://$KI_ROOT/patches/custom/0014-tkg-pci-pme-timeout.patch  96b7670e0d5bcf01ff2333a743e86f340638390d6ad8966368e64ec323b08beb  local-file
+
+# ─── hyphaed: workstation-specific defaults (i9-14900KF / RTX5070 / NVMe) ────
+0015-nvme-lower-default-apst-latency.patch     file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch     50c1f5777237cdc0de68eeeb2d39b7af9b38340461bf8cfeb8e90c915254dd99  local-file
+0016-mm-thp-defrag-defer-madvise-default.patch file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch 526a9e594d94a24ffabf237219eb2f3c94c82654153c6c4edf7c82e035215a17  local-file
+
+# ─── kbuild: UBSAN opt-in for external modules (VMware/vmnet fix) ─────────────
+0017-kbuild-ubsan-extmod-opt-in.patch  file://$KI_ROOT/patches/custom/0017-kbuild-ubsan-extmod-opt-in.patch  d6885d965b1d17bbdc639d0a130496d94582749e6c07726519045bd8f9b5540d  local-file
+
+# ─── TKG (orig. Alex Williamson/lkml): PCIe ACS override ─────────────────────
+# Enables pcie_acs_override= boot param — needed for clean IOMMU groups on
+# workload #3 (VFIO/KVM passthrough) and to isolate the GreenBoost feeder's
+# GPU from other PCIe peers on chipsets that don't expose native ACS.
+# Audited 2026-07-09: CachyOS and Xanmod both fold ACS handling into their
+# upstream trees rather than shipping it as a standalone patch, so TKG
+# (linux-tkg-patches/7.1/0006-add-acs-overrides_iommu.patch) is the only
+# vendor carrying it as a discrete file for 7.1.
+0018-tkg-pci-acs-override.patch  file://$KI_ROOT/patches/custom/0018-tkg-pci-acs-override.patch  122139befc3da25b00b5119e9a2fc59b266ed0de53f36912e9e60f3287c479d6  local-file
+
+# ─── hyphaed: generic dma-buf reclaim-priority hint (own RFC, drafted this
+# session) — see upstream-candidates/dma-buf-priority-hint/README.md ────────
+0019-dma-buf-priority-hint.patch  file://$KI_ROOT/patches/custom/0019-dma-buf-priority-hint.patch  0e932f9840d65f5b4d1e3113622162cccb88d590ff1ab4adb241f79bcd9f7d0a  local-file

@@ -1,0 +1,88 @@
+# Pinned sources for patches/kernel-org-7.1/series (the --source-mode
+# kernel-org --target 7.1.1 opt-in path). Same format as patches/VENDOR.lock.
+#
+# Generated 2026-06-28 from local clones at HEAD:
+#   linux           @ origin/7.1 (Linux 7.1.2-xanmod1, 74edfbf88678)
+#   linux-cachyos   @ HEAD (7.1.2-1)
+#   linux-tkg       @ HEAD (7.1.2 config updated)
+#   kernel-patches  @ master (7.1/sched/0001-bore.patch already present)
+#
+# sha256 values are the patch FILE hashes as committed in
+# patches/kernel-org-7.1/ (not the upstream commit), since several entries
+# (BORE, the 3 reused custom/ patches) are local-file, not git-commit.
+#
+# Re-validated 2026-08-10 for --target 7.1.8: `python -m patches.eval
+# --against build/linux-7.1.8 --series patches/kernel-org-7.1/series` reports
+# all 17 entries CLEAN, including 0001-cachyos-bore-7.1.5.patch (the entry
+# flagged as most likely to need a forward-port, given the 7.1.5 util_est
+# history) — no upstream hunk drift between 7.1.5 and 7.1.8 touched anything
+# this series patches. No files regenerated; every sha256 below is unchanged.
+# 7.1.8 stable was cut 2026-08-09; Canonical's kernel.ubuntu.com/mainline had
+# not built an amd64 image for it yet at validation time (indexed only to
+# v7.1.5), so the baseline `.config` recovery fell back to v7.1.5's Canonical
+# build via `_nearest_mainline_tag_in_series` — expected, documented behavior,
+# not a defect. See out/patch-eval-2026-08-10.json for the raw eval output.
+
+# ─── CachyOS: BORE scheduler (7.1-targeted) ──────────────────────────────────
+# Forward-ported 2026-07-26 for --target 7.1.5: upstream's util_est refactor
+# (util_est_update() moved into update_load_avg(), signature changed)
+# dropped the context line BORE's fair.c hunk anchored on. Regenerated via
+# `git format-patch`, same body as 7.1.4, re-anchored past the missing
+# context. See patches/kernel-org-7.1/series for the full note.
+../custom/0001-cachyos-bore-7.1.5.patch  file://$KI_ROOT/patches/custom/0001-cachyos-bore-7.1.5.patch  e552c93303b69ce540668e42a2dcfc002e8cd771fe72789a1b6a8de1538b3045  local-file
+
+# ─── XanMod: BBR v3 (regenerated 2026-06-28 from xanmod 7.1.2) ───────────────
+# Regenerated from xanmod 7.1.2-xanmod1 commit cf81df0b70ab (github/linux).
+# Prior 7.0-era patch (d83a544c4f01) failed with "sha1 information is lacking
+# or useless (include/linux/tcp.h)" on kernel.org 7.1.2 — tcp.h changed enough
+# that --3way could not resolve. The xanmod 7.1.2 commit applies cleanly.
+# Verified: git apply --check passes against vanilla 7.1.2 + BORE.
+../0002-xanmod-bbr3.patch  file://$KI_ROOT/patches/0002-xanmod-bbr3.patch  0dbd3a294dcf83a62f239ce076d605052a9307b54f485f282467d68e3dbd285d  local-file
+
+# ─── XanMod: zen-style tunings (re-pinned to origin/7.1 commits) ─────────────
+# NOTE: 0006-xanmod-fair-sched-latency-unscaled (commit bc8670f50cb9) was
+# tried and dropped — applies in isolation but CONFLICTS with BORE (0001)
+# when applied in sequence via `git am --3way`. Confirmed CONFLICT via
+# patches/eval.py (2026-06-27). See patches/kernel-org-7.1/series.
+0002-xanmod-zen-vmscan-swap.patch          git+file://$KI_ROOT/linux@899401017f4b  71dffb518083a44ba5624c93fe542aa679b5168b201e941f843552ee9d2007c6  git-commit
+0003-xanmod-zen-vfs-cache.patch             git+file://$KI_ROOT/linux@5364acb9381a  67562c3f664872200be71a8bb0a0f35470d78451616e567714f7e7aa1de9fdc7  git-commit
+0004-xanmod-zen-max-map-count.patch         git+file://$KI_ROOT/linux@a7723cc2dfb4  21d1e3d9b4e536c3731f736941dfe93f8b0903494d78639ff9824ac3c2a0f35d  git-commit
+0005-xanmod-zen-500hz-timer.patch           git+file://$KI_ROOT/linux@bf03ac76142f  cc452a1cc489e388619c1510630ede5ccf13c921f725badcaa0b470c39c1bb51  git-commit
+0006-xanmod-zen-dm-crypt-wq.patch           git+file://$KI_ROOT/linux@56bcc7bed7c0  60ea62469fbec843087c643ab4c145ec8ac821bc164ed72f4044c3dce012ae68  git-commit
+0007-xanmod-zen-evdev-rcu.patch             git+file://$KI_ROOT/linux@57515fef6707  d0e4ee7d7d0fde1aff415fde0966eb32b6fb986c4618f3dd306551ebe6ff5092  git-commit
+
+# ─── XanMod: block / mq-deadline tunings (re-pinned) ─────────────────────────
+0008-xanmod-blk-wbt-latency.patch          git+file://$KI_ROOT/linux@f1a5464529dc  8a94c5621e1b312681a0cbd65e4e2e1f45ec7b69ebfaf1a528272b049528d40d  git-commit
+0009-xanmod-blk-rq-affinity.patch          git+file://$KI_ROOT/linux@fe8442f33c86  18881b47b6e2ebb1e7c573767485b3b45400743779003d64b1f5817d7ecbe7c1  git-commit
+0010-xanmod-mq-deadline-front-merge.patch  git+file://$KI_ROOT/linux@6f59e3558808  86b7fb013c3b860d3bf08155d629e37dbd933c938001795c2b4d492166eb524e  git-commit
+0011-xanmod-mq-deadline-write-prio.patch   git+file://$KI_ROOT/linux@3d11f5795b35  47a5d3a189ce55342858ee735170ebeaa768eb2fdfac173261f573e017ebe30c  git-commit
+
+# ─── Reused unchanged from the Ubuntu/7.0.x series (patches/custom/) ────────
+0012-tkg-pci-pme-timeout.patch             file://$KI_ROOT/patches/custom/0014-tkg-pci-pme-timeout.patch  96b7670e0d5bcf01ff2333a743e86f340638390d6ad8966368e64ec323b08beb  local-file
+0013-nvme-lower-default-apst-latency.patch file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch  50c1f5777237cdc0de68eeeb2d39b7af9b38340461bf8cfeb8e90c915254dd99  local-file
+0014-mm-thp-defrag-defer-madvise-default.patch file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch  526a9e594d94a24ffabf237219eb2f3c94c82654153c6c4edf7c82e035215a17  local-file
+0015-kbuild-ubsan-extmod-opt-in.patch          file://$KI_ROOT/patches/kernel-org-7.1/0015-kbuild-ubsan-extmod-opt-in.patch  2bb001635efafa4f342f7feb7c5d5e3964aec8c7cd29564aa40af8e8d168c793  local-file
+
+# ─── TKG: PCIe ACS override (forward-ported to 7.1.3, 2026-07-09) ───────────
+# Original 7.1.1-era patch hand-edited hunk counts and had context anchored
+# to line numbers that drifted (quirks.c grew between 7.1.1 and 7.1.3),
+# causing `git am` to reject with "does not apply to blobs recorded in its
+# index". Regenerated via `git format-patch` against a real 7.1.3 tree with
+# the series (0001-0015) applied, preserving Mark Weiman's original
+# authorship/content. Not activated by any preset/cmdline by default.
+0018-tkg-pci-acs-override.patch           file://$KI_ROOT/patches/custom/0018-tkg-pci-acs-override.patch  1c1b79b9a0b75d4c29e5008e54461b09d5b7bd65b326d2b57c287d8710490363  local-file
+
+# ─── hyphaed: generic dma-buf reclaim-priority hint (own RFC, drafted this
+# session) — see upstream-candidates/dma-buf-priority-hint/README.md ────────
+0019-dma-buf-priority-hint.patch          file://$KI_ROOT/patches/custom/0019-dma-buf-priority-hint.patch  0e932f9840d65f5b4d1e3113622162cccb88d590ff1ab4adb241f79bcd9f7d0a  local-file
+
+# ─── hyphaed: generic dma-buf compressed-content descriptor (own RFC,
+# drafted 2026-08-10, sibling of 0019 above) — see
+# upstream-candidates/dma-buf-compressed-descriptor/README.md. Authored as a
+# real git commit on top of 0019 (not the clean base — see the note in
+# patches/kernel-org-7.1/series for why that matters), verified via a real
+# sequential `git am --3way` of the full 0001-0020 series against a fresh
+# 7.1.8 kernel-org clone, then compile-tested from that exact stacked tree
+# (drivers/dma-buf/dma-buf.o + drivers/gpu/drm/drm_prime.o), checkpatch
+# clean (0 errors, 0 warnings) ────────────────────────────────────────────
+0020-dma-buf-compressed-descriptor.patch  file://$KI_ROOT/patches/custom/0020-dma-buf-compressed-descriptor.patch  b9d7067d693cd9bb9c05f798ee93fb53bcb1357ae6ba569dd6cf9de17a979559  local-file

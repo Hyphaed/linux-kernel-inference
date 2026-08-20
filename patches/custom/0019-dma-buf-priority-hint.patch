@@ -1,0 +1,243 @@
+From b6097ab1cfe7ab7068e0894012886d71a53cba18 Mon Sep 17 00:00:00 2001
+From: Ferran <ferran.duarri@me.com>
+Date: Sun, 26 Jul 2026 19:10:52 +0200
+Subject: [RFC PATCH] dma-buf: add a generic reclaim-priority hint
+
+dma-buf has no generic mechanism for a buffer's exporter, importer, or
+a cooperating userspace agent to signal how eagerly a given buffer's
+backing memory should be given up relative to other buffers when the
+system is under memory pressure. Pages pinned via pin_user_pages()/
+FOLL_LONGTERM sit outside the normal reclaim path by design, so any
+subsystem that wants a "prefer to keep A over B under pressure" policy
+for its pinned dma-buf allocations currently has to invent its own
+private, driver-specific side channel to express it.
+
+This is a real, recurring pattern: GPU drivers juggling foreground and
+background clients want it, and it shows up concretely in large-model
+AI/ML inference stacks that tier working sets across VRAM/system-RAM/
+NVMe using their own dma-buf exporters -- e.g. an out-of-tree memory
+tiering driver we've been using has its own gaming_mode sysfs flag and
+a per-buffer "heat" score, moving its own DMA-BUF-backed allocations to
+its own private LRU tail under a private IOCTL, purely because there is
+nowhere generic to express "this buffer can go first."
+
+Add one small, opt-in hint instead of another private channel:
+
+  - struct dma_buf gains a `priority` field (atomic_t, plain hint, no
+    new locking), defaulting to DMA_BUF_PRIORITY_DEFAULT (128) and
+    ranging DMA_BUF_PRIORITY_MIN (0) to DMA_BUF_PRIORITY_MAX (255).
+    Lower values should be reclaimed EARLIER under memory pressure.
+
+  - dma_buf_set_priority()/dma_buf_get_priority(), exported under the
+    DMA_BUF symbol namespace, so any dma-buf exporter (in-tree or an
+    out-of-tree module) can set/read it directly.
+
+  - DMA_BUF_IOCTL_SET_PRIORITY / DMA_BUF_IOCTL_GET_PRIORITY so
+    userspace holding an fd can do the same, without needing a private
+    driver ioctl.
+
+  - The current value is reported via fdinfo (`priority:`) for
+    debugging/accounting, next to the existing size/name/exp_name
+    fields.
+
+This is deliberately a hint only: dma-buf core stores and reports the
+value, it implements no eviction policy of its own, and it changes no
+behavior for any existing exporter or importer that doesn't opt in.
+No existing dma_buf_ops callback is touched. Compile-tested: drivers/
+dma-buf/ (incl. the selftest module) and drivers/gpu/drm/drm_prime.o
+both build clean against this change.
+
+Signed-off-by: Ferran <ferran.duarri@me.com>
+---
+ drivers/dma-buf/dma-buf.c    | 51 ++++++++++++++++++++++++++++++++++++
+ include/linux/dma-buf.h      | 26 ++++++++++++++++++
+ include/uapi/linux/dma-buf.h | 33 +++++++++++++++++++++++
+ 3 files changed, 110 insertions(+)
+
+diff --git a/drivers/dma-buf/dma-buf.c b/drivers/dma-buf/dma-buf.c
+index d504c636dc29..1b1d3ee77f47 100644
+--- a/drivers/dma-buf/dma-buf.c
++++ b/drivers/dma-buf/dma-buf.c
+@@ -432,6 +432,39 @@ static long dma_buf_set_name(struct dma_buf *dmabuf, const char __user *buf)
+ 	return 0;
+ }
+ 
++/**
++ * dma_buf_set_priority - Set the reclaim-priority hint on a dma_buf.
++ * @dmabuf:   [in] buffer to update.
++ * @priority: [in] new priority, clamped to
++ *                 [DMA_BUF_PRIORITY_MIN, DMA_BUF_PRIORITY_MAX].
++ *
++ * Lower values should be reclaimed EARLIER under memory pressure. This is
++ * a hint only , dma-buf core stores and reports it, it implements no
++ * eviction policy itself. Safe to call at any time, from any context that
++ * can call dma_buf_get()/hold a reference (no locking required beyond
++ * that reference).
++ */
++void dma_buf_set_priority(struct dma_buf *dmabuf, unsigned int priority)
++{
++	if (priority > DMA_BUF_PRIORITY_MAX)
++		priority = DMA_BUF_PRIORITY_MAX;
++	atomic_set(&dmabuf->priority, priority);
++}
++EXPORT_SYMBOL_NS_GPL(dma_buf_set_priority, "DMA_BUF");
++
++/**
++ * dma_buf_get_priority - Read back the current reclaim-priority hint.
++ * @dmabuf: [in] buffer to query.
++ *
++ * Returns the value most recently set via dma_buf_set_priority() (or
++ * DMA_BUF_PRIORITY_DEFAULT if never set).
++ */
++unsigned int dma_buf_get_priority(struct dma_buf *dmabuf)
++{
++	return atomic_read(&dmabuf->priority);
++}
++EXPORT_SYMBOL_NS_GPL(dma_buf_get_priority, "DMA_BUF");
++
+ #if IS_ENABLED(CONFIG_SYNC_FILE)
+ static long dma_buf_export_sync_file(struct dma_buf *dmabuf,
+ 				     void __user *user_data)
+@@ -542,6 +575,7 @@ static long dma_buf_ioctl(struct file *file,
+ {
+ 	struct dma_buf *dmabuf;
+ 	struct dma_buf_sync sync;
++	struct dma_buf_priority prio;
+ 	enum dma_data_direction direction;
+ 	int ret;
+ 
+@@ -580,6 +614,21 @@ static long dma_buf_ioctl(struct file *file,
+ 	case DMA_BUF_SET_NAME_B:
+ 		return dma_buf_set_name(dmabuf, (const char __user *)arg);
+ 
++	case DMA_BUF_IOCTL_SET_PRIORITY:
++		if (copy_from_user(&prio, (void __user *)arg, sizeof(prio)))
++			return -EFAULT;
++		if (prio.pad || prio.priority > DMA_BUF_PRIORITY_MAX)
++			return -EINVAL;
++		dma_buf_set_priority(dmabuf, prio.priority);
++		return 0;
++
++	case DMA_BUF_IOCTL_GET_PRIORITY:
++		memset(&prio, 0, sizeof(prio));
++		prio.priority = dma_buf_get_priority(dmabuf);
++		if (copy_to_user((void __user *)arg, &prio, sizeof(prio)))
++			return -EFAULT;
++		return 0;
++
+ #if IS_ENABLED(CONFIG_SYNC_FILE)
+ 	case DMA_BUF_IOCTL_EXPORT_SYNC_FILE:
+ 		return dma_buf_export_sync_file(dmabuf, (void __user *)arg);
+@@ -604,6 +653,7 @@ static void dma_buf_show_fdinfo(struct seq_file *m, struct file *file)
+ 	if (dmabuf->name)
+ 		seq_printf(m, "name:\t%s\n", dmabuf->name);
+ 	spin_unlock(&dmabuf->name_lock);
++	seq_printf(m, "priority:\t%u\n", dma_buf_get_priority(dmabuf));
+ }
+ 
+ static const struct file_operations dma_buf_fops = {
+@@ -748,6 +798,7 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info)
+ 	dmabuf->exp_name = exp_info->exp_name;
+ 	dmabuf->owner = exp_info->owner;
+ 	spin_lock_init(&dmabuf->name_lock);
++	atomic_set(&dmabuf->priority, DMA_BUF_PRIORITY_DEFAULT);
+ 	init_waitqueue_head(&dmabuf->poll);
+ 	dmabuf->cb_in.poll = dmabuf->cb_out.poll = &dmabuf->poll;
+ 	dmabuf->cb_in.active = dmabuf->cb_out.active = 0;
+diff --git a/include/linux/dma-buf.h b/include/linux/dma-buf.h
+index d1203da56fc5..b3d3f2858704 100644
+--- a/include/linux/dma-buf.h
++++ b/include/linux/dma-buf.h
+@@ -354,6 +354,29 @@ struct dma_buf {
+ 	/** @name_lock: Spinlock to protect name access for read access. */
+ 	spinlock_t name_lock;
+ 
++	/**
++	 * @priority:
++	 *
++	 * Reclaim-priority hint for this buffer's backing memory, in the
++	 * range DMA_BUF_PRIORITY_MIN..DMA_BUF_PRIORITY_MAX (see
++	 * include/uapi/linux/dma-buf.h). Lower values should be reclaimed
++	 * EARLIER under memory pressure. Defaults to
++	 * DMA_BUF_PRIORITY_DEFAULT.
++	 *
++	 * This is a hint only: dma-buf core implements no eviction policy
++	 * of its own, it merely stores and reports the value so exporters
++	 * (and cooperating shrinkers) have one shared, generic place to
++	 * look instead of each inventing a private side channel. Read with
++	 * dma_buf_get_priority(), set with dma_buf_set_priority() , also
++	 * reachable from userspace via DMA_BUF_IOCTL_SET_PRIORITY /
++	 * DMA_BUF_IOCTL_GET_PRIORITY.
++	 *
++	 * Plain atomic_t rather than a lock: this is a coarse, racy-by-
++	 * design hint consulted opportunistically, not a value anything
++	 * synchronizes correctness on.
++	 */
++	atomic_t priority;
++
+ 	/**
+ 	 * @owner:
+ 	 *
+@@ -566,6 +589,9 @@ void dma_buf_unpin(struct dma_buf_attachment *attach);
+ 
+ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info);
+ 
++void dma_buf_set_priority(struct dma_buf *dmabuf, unsigned int priority);
++unsigned int dma_buf_get_priority(struct dma_buf *dmabuf);
++
+ int dma_buf_fd(struct dma_buf *dmabuf, int flags);
+ struct dma_buf *dma_buf_get(int fd);
+ void dma_buf_put(struct dma_buf *dmabuf);
+diff --git a/include/uapi/linux/dma-buf.h b/include/uapi/linux/dma-buf.h
+index e827c9d20c5d..4a1d26e0b0a0 100644
+--- a/include/uapi/linux/dma-buf.h
++++ b/include/uapi/linux/dma-buf.h
+@@ -168,6 +168,37 @@ struct dma_buf_import_sync_file {
+ 	__s32 fd;
+ };
+ 
++/**
++ * struct dma_buf_priority - Reclaim-priority hint for a dma-buf
++ *
++ * dma-buf has no generic mechanism for a buffer's exporter, importer, or
++ * a cooperating userspace agent to signal how eagerly this buffer's
++ * backing memory should be given up relative to other buffers when the
++ * system is under memory pressure. Every subsystem that wants this today
++ * (GPU drivers juggling foreground/background clients, memory-tiering
++ * allocators for large ML/AI working sets, ...) has to build its own
++ * private, driver-specific side channel to express it.
++ *
++ * DMA_BUF_IOCTL_SET_PRIORITY / DMA_BUF_IOCTL_GET_PRIORITY add one shared,
++ * generic hint that any dma-buf exporter MAY consult. This is a hint
++ * only: the dma-buf core stores and reports the value, it implements no
++ * eviction policy of its own and by itself changes no behavior for any
++ * existing exporter.
++ */
++struct dma_buf_priority {
++	/**
++	 * @priority: DMA_BUF_PRIORITY_MIN..DMA_BUF_PRIORITY_MAX. Lower
++	 * values should be reclaimed EARLIER under memory pressure.
++	 */
++	__u32 priority;
++	/** @pad: must be zero, reserved for future use. */
++	__u32 pad;
++};
++
++#define DMA_BUF_PRIORITY_MIN		0
++#define DMA_BUF_PRIORITY_DEFAULT	128
++#define DMA_BUF_PRIORITY_MAX		255
++
+ #define DMA_BUF_BASE		'b'
+ #define DMA_BUF_IOCTL_SYNC	_IOW(DMA_BUF_BASE, 0, struct dma_buf_sync)
+ 
+@@ -179,5 +210,7 @@ struct dma_buf_import_sync_file {
+ #define DMA_BUF_SET_NAME_B	_IOW(DMA_BUF_BASE, 1, __u64)
+ #define DMA_BUF_IOCTL_EXPORT_SYNC_FILE	_IOWR(DMA_BUF_BASE, 2, struct dma_buf_export_sync_file)
+ #define DMA_BUF_IOCTL_IMPORT_SYNC_FILE	_IOW(DMA_BUF_BASE, 3, struct dma_buf_import_sync_file)
++#define DMA_BUF_IOCTL_SET_PRIORITY	_IOW(DMA_BUF_BASE, 4, struct dma_buf_priority)
++#define DMA_BUF_IOCTL_GET_PRIORITY	_IOR(DMA_BUF_BASE, 5, struct dma_buf_priority)
+ 
+ #endif
+-- 
+2.53.0
+

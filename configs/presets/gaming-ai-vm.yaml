@@ -1,0 +1,63 @@
+name: gaming-ai-vm
+description: |
+  Default workstation preset: balanced for local AI inference (CUDA + GreenBoost),
+  Steam/Proton gaming under GNOME+Wayland, and VMware Workstation VMs.
+  All CPU vulnerability mitigations kept ON.
+
+fragments:
+  - 10-preempt-full.config
+  - 11-hz-1000.config
+  - 12-scheduler-bore-scx.config
+  - 13-energy-intel-hybrid.config
+  - 20-mitigations-on.config
+  - 21-ai-gpu-mem.config
+  - 33-pcie-dma-substrate.config
+  - 30-mm-thp-mglru.config
+  - 31-mm-zswap-zstd.config
+  - 32-mm-damon.config
+  - 40-iommu-vfio.config
+  - 41-kvm-nested.config
+  - 42-io-uring-bpf.config
+  - 43-ntsync.config
+  - 50-net-bbr-fq.config
+  - 60-nvidia-wayland.config
+  - 61-no-amdgpu-no-nouveau.config
+  - 80-raptorlake-intel.config
+  - 81-native-cpu-opt.config
+  - 82-strip-unused-modules.config
+  - 70-greenboost-required.config   # MUST be last
+
+cmdline_extra: []
+# NOTE: confirmed via `nvme id-ctrl` (2026-06-25) that this drive's HMPRE is
+# exactly 64 MiB, already fully satisfied by the in-tree 128 MiB default
+# cap (dmesg: "allocated 64 MiB host memory buffer"). nvme.max_host_mem_size_mb
+# would be a no-op for this drive — deliberately not added here.
+
+patches:
+  # patches/series (ubuntu mode) or patches/kernel-org-7.1/series (kernel-org
+  # mode, per --source-mode) governs actual patch application. Listed here
+  # for documentation and dry-run reporting only.
+  - 0001-cachyos-bore-scheduler.patch
+  - 0002-xanmod-bbr3.patch
+  - 0003-xanmod-zen-vmscan-swap.patch
+  - 0004-xanmod-zen-vfs-cache.patch
+  - 0005-xanmod-zen-max-map-count.patch
+  - 0006-xanmod-zen-500hz-timer.patch
+  - 0007-xanmod-zen-sched-latency.patch
+  - 0008-xanmod-zen-dm-crypt-wq.patch
+  - 0009-xanmod-zen-evdev-rcu.patch
+  - 0010-xanmod-blk-wbt-latency.patch
+  - 0011-xanmod-blk-rq-affinity.patch
+  - 0012-xanmod-mq-deadline-front-merge.patch
+  - 0013-xanmod-mq-deadline-write-prio.patch
+  - 0014-tkg-pci-pme-timeout.patch
+  - 0015-nvme-lower-default-apst-latency.patch
+  - 0016-mm-thp-defrag-defer-madvise-default.patch
+  - custom/0017-kbuild-ubsan-extmod-opt-in.patch
+  - custom/0019-dma-buf-priority-hint.patch
+  - custom/0020-dma-buf-compressed-descriptor.patch
+
+dkms_modules:
+  - nvidia-dkms
+  - greenboost
+  - vmware-host-modules

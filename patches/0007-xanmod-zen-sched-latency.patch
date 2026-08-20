@@ -1,0 +1,27 @@
+From: Alexandre Frade <kernel@xanmod.org>
+Date: Thu, 11 May 2023 19:41:41 +0000
+Subject: [PATCH] XANMOD: fair: Set scheduler tunable latencies to unscaled
+
+Adapted for post-BORE structure: BORE patch (0001) wrapped the original
+single declaration in #ifdef CONFIG_SCHED_BORE/#else/#endif. This version
+targets the !BORE branch so XanMod's NONE default holds in both paths.
+
+Signed-off-by: Alexandre Frade <kernel@xanmod.org>
+Forward-Port-Notes: kernel/sched/fair.c
+---
+ kernel/sched/fair.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 630896fc035d..xxxxxxxxxxxxxxxx 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -77,7 +77,7 @@
+ #ifdef CONFIG_SCHED_BORE
+ unsigned int sysctl_sched_tunable_scaling = SCHED_TUNABLESCALING_NONE;
+ #else /* !CONFIG_SCHED_BORE */
+-unsigned int sysctl_sched_tunable_scaling = SCHED_TUNABLESCALING_LOG;
++unsigned int sysctl_sched_tunable_scaling = SCHED_TUNABLESCALING_NONE;
+ #endif /* CONFIG_SCHED_BORE */
+
+ /*

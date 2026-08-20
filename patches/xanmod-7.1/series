@@ -1,0 +1,18 @@
+# hyphaed patch series for --source-mode xanmod --target 7.1.2 (ordered)
+#
+# Base: xanmod 7.1.2-xanmod1 (github/linux @ 74edfbf88678)
+#
+# xanmod 7.1.2 already includes:
+#   BBRv3, zen-vmscan/vfs/map-count/500hz/dm-crypt/evdev, blk-wbt/rq-affinity,
+#   mq-deadline-front-merge/write-prio, ACS overrides, steamdeck, fullcone NAT
+#
+# This series applies only what xanmod does NOT include:
+#   BORE scheduler, TKG/custom tunings, UBSAN external-module opt-in.
+#
+# Sources pinned in patches/VENDOR-xanmod-7.1.lock.
+
+0001-cachyos-bore-scheduler.patch
+0002-tkg-pci-pme-timeout.patch
+0003-nvme-lower-default-apst-latency.patch
+0004-mm-thp-defrag-defer-madvise-default.patch
+0005-kbuild-ubsan-extmod-opt-in.patch

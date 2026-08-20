@@ -1,0 +1,129 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:hyphaed-linux-kernel-cve-db",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-05-13T00:00:00Z",
+    "component": {
+      "bom-ref": "linux-kernel-hyphaed",
+      "type": "operating-system",
+      "name": "linux-kernel",
+      "version": "7.0.0"
+    },
+    "tools": [
+      {
+        "vendor": "hyphaed",
+        "name": "linux-kernel.vex.json",
+        "version": "1.0"
+      }
+    ]
+  },
+  "vulnerabilities": [
+    {
+      "bom-ref": "CVE-2026-31431",
+      "id": "CVE-2026-31431",
+      "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+      "ratings": [
+        {
+          "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+          "score": 7.8,
+          "severity": "high",
+          "method": "CVSSv3"
+        }
+      ],
+      "description": "Linux kernel LPE via algif_aead in-place AEAD (splice+sendmsg+recv, no root). Fixed in commit a664bf3d603d. Defense-in-depth: CONFIG_CRYPTO_USER_API_AEAD=n.",
+      "affects": [{ "ref": "linux-kernel-hyphaed" }]
+    },
+    {
+      "bom-ref": "CVE-2024-1086",
+      "id": "CVE-2024-1086",
+      "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+      "ratings": [
+        {
+          "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+          "score": 7.8,
+          "severity": "high",
+          "method": "CVSSv3"
+        }
+      ],
+      "description": "nf_tables use-after-free via nft_verdict_init allows privilege escalation. Requires CONFIG_NF_TABLES. Fixed upstream in 6.7.2+.",
+      "affects": [{ "ref": "linux-kernel-hyphaed" }]
+    },
+    {
+      "bom-ref": "CVE-2024-26925",
+      "id": "CVE-2024-26925",
+      "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+      "ratings": [
+        {
+          "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+          "score": 7.0,
+          "severity": "high",
+          "method": "CVSSv3"
+        }
+      ],
+      "description": "netfilter: nf_tables race condition in NFT_MSG_DESTROYCHAIN causing UAF. Requires CONFIG_NF_TABLES. Fixed upstream 6.8.5+.",
+      "affects": [{ "ref": "linux-kernel-hyphaed" }]
+    },
+    {
+      "bom-ref": "CVE-2023-6931",
+      "id": "CVE-2023-6931",
+      "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+      "ratings": [
+        {
+          "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+          "score": 7.8,
+          "severity": "high",
+          "method": "CVSSv3"
+        }
+      ],
+      "description": "perf subsystem out-of-bounds write in perf_event_open() via __perf_read_group_add. Requires CONFIG_PERF_EVENTS. Fixed upstream 6.7+.",
+      "affects": [{ "ref": "linux-kernel-hyphaed" }]
+    },
+    {
+      "bom-ref": "CVE-2024-36886",
+      "id": "CVE-2024-36886",
+      "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+      "ratings": [
+        {
+          "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+          "score": 7.1,
+          "severity": "high",
+          "method": "CVSSv3"
+        }
+      ],
+      "description": "TIPC protocol OOB read/write in skb_copy_ubufs. Requires CONFIG_TIPC. Fixed upstream 6.9+.",
+      "affects": [{ "ref": "linux-kernel-hyphaed" }]
+    },
+    {
+      "bom-ref": "CVE-2024-35805",
+      "id": "CVE-2024-35805",
+      "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+      "ratings": [
+        {
+          "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+          "score": 5.5,
+          "severity": "medium",
+          "method": "CVSSv3"
+        }
+      ],
+      "description": "dm-thin: race on device removal causing memory corruption. Requires CONFIG_DM_THIN_PROVISIONING. Fixed upstream 6.8+.",
+      "affects": [{ "ref": "linux-kernel-hyphaed" }]
+    },
+    {
+      "bom-ref": "CVE-2024-26828",
+      "id": "CVE-2024-26828",
+      "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+      "ratings": [
+        {
+          "source": { "name": "NVD", "url": "https://nvd.nist.gov/" },
+          "score": 6.7,
+          "severity": "medium",
+          "method": "CVSSv3"
+        }
+      ],
+      "description": "CIFS: undersize allocation when mounting with SMB3.1.1 negotiate. Requires CONFIG_CIFS. Fixed upstream 6.8+.",
+      "affects": [{ "ref": "linux-kernel-hyphaed" }]
+    }
+  ]
+}

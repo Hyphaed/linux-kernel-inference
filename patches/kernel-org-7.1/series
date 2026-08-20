@@ -1,0 +1,131 @@
+# hyphaed patch series for --source-mode kernel-org --target 7.1.2 (ordered)
+#
+# Parallel to patches/series (the Ubuntu/7.0.x default path) — kept separate
+# because re-pinning the default series in place would break the proven,
+# daily-driver Ubuntu pipeline. Validated 2026-06-25 via `git am --3way` in
+# sequence (not just individual `git apply --check`) against a real
+# kernel.org v7.1.1 clone.
+#
+# Dropped vs. the 7.0.x series:
+#   0007-xanmod-zen-sched-latency — Its 7.1 replacement candidate (XanMod's
+#                            "fair: Set scheduler tunable latencies to
+#                            unscaled", origin/7.1 commit bc8670f50cb9)
+#                            applies in isolation but CONFLICTS with BORE
+#                            (0001) when applied in sequence — BORE rewrites
+#                            fair.c's latency mechanism extensively and
+#                            supersedes this tunable anyway. Confirmed
+#                            CONFLICT via patches/eval.py (2026-06-27).
+#
+# Re-dropped 2026-07-09 (was re-admitted 2026-06-27, see below):
+#   0002-xanmod-bbr3       — CLEAN against the 7.1.1 tree it was validated
+#                            on, but the --target default has since moved to
+#                            7.1.3 and net/ipv4/tcp_bbr.c diverged enough
+#                            upstream between 7.1.1 and 7.1.3 that `git am
+#                            --3way` now hits 4 real conflict hunks (one 44
+#                            lines) — not a trivial context-line drift.
+#                            BBRv3 is TCP congestion control (server network
+#                            throughput), not on the critical path for local
+#                            AI inference, and hand-resolving unfamiliar
+#                            congestion-control C merge conflicts risks
+#                            silent correctness bugs. Dropped rather than
+#                            patched blind — confirmed CONFLICT via a real
+#                            `git am --3way` against a fresh 7.1.3 kernel.org
+#                            clone. Re-admit once a 7.1.3-native BBRv3 port
+#                            is sourced (check kernel-patches@master again).
+#
+# Originally re-admitted 2026-06-27 under the assumption BBRv3 is
+# upstreamed in mainline 7.1 (it isn't; tcp_bbr.c is still BBRv1 in vanilla
+# 7.1.x) — eval.py showed CLEAN against XanMod 7.1.1 and the built 7.1.1
+# tree at the time. Sourced as local-file from
+# patches/0002-xanmod-bbr3.patch (d83a544c4f01 from XanMod 7.0).
+#
+# Forward-ported 2026-07-09 (was briefly dropped same day after an initial
+# `git am --3way` failure — that failure was a malformed source patch, not
+# an unfixable conflict; see below):
+#   0018-tkg-pci-acs-override — the vendored 2018-era patch (Mark Weiman fork
+#                            of Alex Williamson's original ACS-override) had
+#                            hand-edited hunk headers with wrong line counts
+#                            (`@@ -5102,6 +5102,7 @@` for a 4-old/5-new body)
+#                            and a pre-image blob not in this repo's object
+#                            store, so `git am` rejected it outright before
+#                            `--3way` ever got a chance to reconcile context
+#                            drift. Regenerated cleanly via `git format-patch`
+#                            against a real 7.1.3 kernel-org tree (series
+#                            0001-0015 applied) — content unchanged from the
+#                            original Mark Weiman patch, only hunk
+#                            context/placement re-anchored to where
+#                            `pci_dev_acs_enabled[]` now lives. Verified
+#                            `git am --3way` clean for the full 0001-0018
+#                            sequence. Not activated by any preset/cmdline by
+#                            default — the boot option `pcie_acs_override=`
+#                            just becomes available.
+#
+# Forward-ported 2026-07-26 (--target 7.1.5):
+#   0001-cachyos-bore-scheduler — upstream 7.1.5 refactored util_est:
+#                            util_est_update() changed signature to take a
+#                            struct sched_entity * and moved out of
+#                            dequeue_task_fair() into update_load_avg()
+#                            behind a new UPDATE_UTIL_EST flag. BORE's
+#                            fair.c hunk carried the old
+#                            util_est_update(&rq->cfs, p, ...) call as
+#                            leading context, so `git am --3way` failed on
+#                            that one hunk (reported misleadingly against
+#                            include/linux/sched.h, since this repo's git
+#                            baseline has no upstream blobs for --3way to
+#                            recover from — see gitops.apply_series). Every
+#                            other hunk applied cleanly; BORE's inserted
+#                            code has no dependency on util_est. Regenerated
+#                            via `git format-patch` against a real 7.1.5
+#                            kernel-org tree with the same BORE body as
+#                            7.1.4, just re-anchored past the missing
+#                            context line. CachyOS kernel-patches@master (21
+#                            commits ahead of the local clone) has no 7.1.5
+#                            refresh of 0001-bore.patch — re-check there on
+#                            the next kernel bump before forward-porting
+#                            again by hand.
+#
+# Sources pinned in patches/VENDOR-kernel-org-7.1.lock.
+
+../custom/0001-cachyos-bore-7.1.5.patch
+0002-xanmod-zen-vmscan-swap.patch
+0003-xanmod-zen-vfs-cache.patch
+0004-xanmod-zen-max-map-count.patch
+0005-xanmod-zen-500hz-timer.patch
+0006-xanmod-zen-dm-crypt-wq.patch
+0007-xanmod-zen-evdev-rcu.patch
+0008-xanmod-blk-wbt-latency.patch
+0009-xanmod-blk-rq-affinity.patch
+0010-xanmod-mq-deadline-front-merge.patch
+0011-xanmod-mq-deadline-write-prio.patch
+0012-tkg-pci-pme-timeout.patch
+0013-nvme-lower-default-apst-latency.patch
+0014-mm-thp-defrag-defer-madvise-default.patch
+0015-kbuild-ubsan-extmod-opt-in.patch
+../custom/0018-tkg-pci-acs-override.patch
+
+# Own RFC candidate (not yet sent to LKML — see
+# upstream-candidates/dma-buf-priority-hint/README.md at the repo root
+# for the full writeup + submission walkthrough). Pure addition (110
+# lines, 3 files: include/uapi/linux/dma-buf.h, include/linux/dma-buf.h,
+# drivers/dma-buf/dma-buf.c) — no conflict surface with any patch above.
+../custom/0019-dma-buf-priority-hint.patch
+
+# Own RFC candidate, sibling of 0019 above (not yet sent — see
+# upstream-candidates/dma-buf-compressed-descriptor/README.md). Adds an
+# optional {codec, block_size, uncompressed_size} descriptor so an exporter
+# that has compressed a buffer's contents in place (rather than evicting and
+# later re-fetching them) can tell an importer how to inflate it. Same 3
+# files as 0019. New ioctls are numbered 6/7, not 4/5, since 0019 already
+# claims those.
+#
+# Authored as a real git commit ON TOP OF 0019 (not against the clean base)
+# — an earlier draft authored against the clean base looked like it had
+# non-overlapping hunks by inspection, but `git am --3way` for the real
+# 0001-0020 sequence hit 3 conflicts (dma-buf.c, both headers) because 0019's
+# inserted lines shifted every anchor. Re-authored directly on a tree with
+# 0001-0019 already applied, verified 2026-08-10 via an actual (not merely
+# planned) sequential `git am --3way` of the full 18-patch series against a
+# fresh 7.1.8 kernel-org clone — 0 conflicts, then confirmed
+# drivers/dma-buf/dma-buf.o and drivers/gpu/drm/drm_prime.o both build clean
+# from that exact stacked tree. checkpatch: 0 errors, 0 warnings.
+../custom/0020-dma-buf-compressed-descriptor.patch

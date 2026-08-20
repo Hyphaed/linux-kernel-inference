@@ -1,0 +1,283 @@
+from __future__ import annotations
+import os
+import shutil
+from pathlib import Path
+
+from ..util import log
+from ..util.run import run_sudo
+from ..util.prompts import confirm
+from .. import grub, secureboot
+
+NAME = "install"
+
+_DRACUT_CONF = Path("/etc/dracut.conf.d/99-hyphaed-no-nvidia-initramfs.conf")
+_DRACUT_CONF_BODY = (
+    "# NVIDIA modules are runtime-only (loaded by udev after root is mounted).\n"
+    "# Embedding them adds ~75 MB and breaks recovery boot: dracut tries to load\n"
+    "# nvidia_drm during the initramfs phase; nomodeset (recovery cmdline) causes\n"
+    "# DRM init failure, dropping the system into emergency shell instead of the\n"
+    "# Ubuntu friendly-recovery menu.\n"
+    "#\n"
+    "# nvidia_fs added 2026-08-18. It was omitted from this list while\n"
+    "# /etc/modules-load.d/nvidia-fs.conf still asks systemd-modules-load to\n"
+    "# bring it up early, so every boot on this box logged eight consecutive\n"
+    "# failures at t=1.65s:\n"
+    "#   nvidia_fs: Unknown symbol nvidia_p2p_get_pages (err -2)   [x8]\n"
+    "# nvidia_fs depends on nvidia for the nvidia_p2p_* GPUDirect Storage\n"
+    "# symbols, and nvidia is (correctly) not in the initramfs, so the early\n"
+    "# load can only fail. It self-heals — nvidia loads at t=60s and nvidia_fs\n"
+    "# re-initialises cleanly at t=61.8s ('registered correctly with major\n"
+    "# number 508') — so this is boot-log noise, not a broken GDS path. Worth\n"
+    "# fixing anyway: eight error lines that are expected teach you to ignore\n"
+    "# nvidia_fs errors, which is exactly the wrong reflex for the T3/GDS tier.\n"
+    'omit_drivers+=" nvidia nvidia_drm nvidia_modeset nvidia_uvm nvidia_peermem nvidia_fs "\n'
+)
+
+# Bumped whenever _DRACUT_CONF_BODY changes meaning. The old check was
+# `"nvidia_drm" in body and "omit_drivers" in body`, which is true of every
+# version this file has ever had — so an already-deployed conf was never
+# updated, and the nvidia_fs addition above would have silently never
+# reached a machine that already had the file. Match on the current driver
+# list instead of on any-version markers.
+_DRACUT_OMIT_MARKER = "nvidia_fs "
+
+
+def _ensure_dracut_no_nvidia_conf() -> None:
+    try:
+        body = _DRACUT_CONF.read_text()
+        if "omit_drivers" in body and _DRACUT_OMIT_MARKER in body:
+            log.ok(f"dracut no-nvidia conf already in place ({_DRACUT_CONF.name})")
+            return
+        if "omit_drivers" in body:
+            log.info(f"{_DRACUT_CONF.name} predates the nvidia_fs omission — refreshing")
+    except OSError:
+        pass
+    log.info(f"writing {_DRACUT_CONF.name} — excludes NVIDIA from initramfs")
+    run_sudo(["tee", str(_DRACUT_CONF)], input_str=_DRACUT_CONF_BODY)
+    log.ok("NVIDIA excluded from initramfs; recovery boot will reach Ubuntu recovery menu")
+
+
+_NUMA_RULE = Path("/etc/udev/rules.d/62-hyphaed-pci-numa-node.rules")
+_NUMA_RULE_BODY = (
+    "# Consumer boards routinely omit ACPI _PXM for PCIe slots, so the kernel\n"
+    "# reports numa_node=-1 (NUMA_NO_NODE) for devices that plainly do belong\n"
+    "# to the only node there is. Observed on this box 2026-08-18:\n"
+    "#   /sys/bus/pci/devices/0000:01:00.0/numa_node -> -1\n"
+    "#   nvidia-fs:warning: error retrieving numa node for device 0000:01:00.0\n"
+    "# (four such warnings per boot, GPU + NVMe).\n"
+    "#\n"
+    "# On a machine with exactly one online node, 0 is the only truthful\n"
+    "# answer and -1 just means firmware declined to say. This rule is written\n"
+    "# ONLY on single-node machines (checked at install time, see\n"
+    "# _ensure_pci_numa_rule) because on a real multi-node box a fabricated\n"
+    "# node would misdirect NUMA-local allocation, which is worse than the\n"
+    "# warning it silences.\n"
+    'ACTION=="add", SUBSYSTEM=="pci", ATTR{numa_node}=="-1", ATTR{numa_node}="0"\n'
+)
+
+
+def _online_numa_nodes() -> int:
+    """Count online NUMA nodes. 0 on a kernel without CONFIG_NUMA sysfs."""
+    try:
+        return len(list(Path("/sys/devices/system/node").glob("node[0-9]*")))
+    except OSError:
+        return 0
+
+
+def _ensure_pci_numa_rule() -> None:
+    nodes = _online_numa_nodes()
+    if nodes != 1:
+        log.info(
+            f"{nodes} NUMA node(s) detected — not writing {_NUMA_RULE.name}; "
+            "pinning a node is only truthful on a single-node machine"
+        )
+        return
+    try:
+        if _NUMA_RULE.read_text() == _NUMA_RULE_BODY:
+            log.ok(f"PCI numa_node rule already in place ({_NUMA_RULE.name})")
+            return
+    except OSError:
+        pass
+    log.info(f"writing {_NUMA_RULE.name} — pins numa_node=0 for PCI devices reporting -1")
+    run_sudo(["tee", str(_NUMA_RULE)], input_str=_NUMA_RULE_BODY)
+    log.ok("PCI numa_node rule written; takes effect on next boot (or `udevadm trigger`)")
+
+
+# Packages the kernel cannot boot/run without. Anything else (e.g.
+# linux-hyphaed-tools — cpupower/turbostat/x86_energy_perf_policy) is a
+# nice-to-have: a dpkg conflict on one of those must not abort the phase
+# before the boot-critical initramfs check and GRUB drop-in run.
+_REQUIRED_PREFIXES = ("linux-headers-", "linux-image-", "linux-libc-dev")
+
+
+def _is_required(name: str) -> bool:
+    return name.startswith(_REQUIRED_PREFIXES)
+
+
+def _order(debs: list[Path]) -> list[Path]:
+    """headers first, then image, then libc-dev, then anything else."""
+    RANKS = {"linux-headers-": 0, "linux-image-": 1, "linux-libc-dev": 2}
+
+    def key(p: Path) -> int:
+        n = p.name
+        for prefix, rank in RANKS.items():
+            if n.startswith(prefix):
+                return rank
+        return 9
+
+    return sorted(debs, key=key)
+
+
+def _verify_or_repair_initramfs(kver: str) -> None:
+    """Check /boot/initrd.img-{kver} was created; force dracut if not."""
+    initrd = Path(f"/boot/initrd.img-{kver}")
+    _MIN_INITRD_BYTES = 5 * 1024 * 1024  # anything under 5 MB is almost certainly broken
+
+    if initrd.exists() and initrd.stat().st_size >= _MIN_INITRD_BYTES:
+        log.ok(f"initramfs present: {initrd.name} ({initrd.stat().st_size // (1024*1024)} MiB)")
+        return
+
+    if initrd.exists():
+        log.warn(f"initramfs at {initrd} is suspiciously small ({initrd.stat().st_size // 1024} KiB) — regenerating")
+    else:
+        log.warn(f"initramfs NOT found at {initrd} — dpkg postinst hook may have failed silently")
+
+    # Prefer dracut (Ubuntu 26.04); fall back to update-initramfs
+    if shutil.which("dracut"):
+        log.info(f"running: dracut --hostonly --force {initrd} {kver}")
+        run_sudo(["dracut", "--hostonly", "--force", str(initrd), kver])
+    elif shutil.which("update-initramfs"):
+        log.info(f"running: update-initramfs -c -k {kver}")
+        run_sudo(["update-initramfs", "-c", "-k", kver])
+    else:
+        log.err("neither dracut nor update-initramfs found — cannot generate initramfs")
+        log.err(f"  fix manually: sudo dracut --force /boot/initrd.img-{kver} {kver}")
+        raise SystemExit(2)
+
+    # Re-check after forced generation
+    if not initrd.exists() or initrd.stat().st_size < _MIN_INITRD_BYTES:
+        log.err(f"initramfs regeneration failed — {initrd} still missing or too small")
+        log.err("this kernel WILL panic on boot — do not reboot until this is resolved")
+        raise SystemExit(2)
+
+    log.ok(f"initramfs regenerated: {initrd.name} ({initrd.stat().st_size // (1024*1024)} MiB)")
+
+
+def run_phase(ctx) -> None:
+    log.banner("Phase 8/9 — Install .deb + GRUB")
+    profile = ctx.profile
+
+    # Secure Boot preflight
+    sb_ok, sb_reason = secureboot.preflight(profile)
+    log.info(f"SecureBoot: {sb_reason}")
+    if not sb_ok:
+        log.err("aborting install — generate MOK keys with `sudo update-secureboot-policy` first")
+        raise SystemExit(2)
+
+    debs = ctx.packaged_debs or []
+    if not debs:
+        # Recover from already-built run
+        out = ctx.repo_root / "out" / "debs"
+        debs = sorted(out.glob("linux-*.deb"))
+    if not debs:
+        if ctx.dry_run:
+            log.info("(dry-run) no .deb files yet; would install once build phase runs")
+            return
+        log.err("no .deb files found to install")
+        raise SystemExit(2)
+
+    debs = _order(debs)
+    log.info("will install (in order):")
+    total_bytes = 0
+    for d in debs:
+        total_bytes += d.stat().st_size
+        log.console.print(f"  • {d.name}  ({d.stat().st_size // (1024*1024)} MB)")
+    log.info(f"total: {total_bytes // (1024*1024)} MB")
+
+    # /boot space check
+    st = os.statvfs("/boot")
+    free_mb = (st.f_bavail * st.f_frsize) // (1024 * 1024)
+    if free_mb < 400:
+        log.err(f"/boot has only {free_mb} MB free — refuse to install (need ≥400 MB)")
+        raise SystemExit(2)
+
+    # Already running -hyphaed?
+    if profile.running_kernel.endswith(f"-{profile.flavour}"):
+        log.warn(f"the running kernel ({profile.running_kernel}) is already a -{profile.flavour} build")
+
+    if ctx.dry_run:
+        log.info("(dry-run) would dpkg -i the packages above")
+    else:
+        if not confirm(
+            f"proceed with installation of {len(debs)} packages?",
+            default=False, hard=True,
+        ):
+            # Declining must not look like a crash, and must not look like the
+            # build was thrown away. Real incident 2026-08-18: a 37-minute
+            # build finished, the user pressed Enter a few times at what they
+            # thought was a stalled progress bar, and this prompt (default=No)
+            # took one of them, exited 0, and printed nothing. The .debs were
+            # all present in out/debs/ and phases_completed already listed
+            # build+package, but nothing on screen said so, so it read as
+            # "the build died at 100%".
+            log.info(f"install declined — {len(debs)} package(s) are built and "
+                     f"waiting in {debs[0].parent}")
+            log.info("resume with:  python -m hyphaed --from-phase install")
+            log.warn("note this prompt defaults to NO, so a bare Enter declines it")
+            raise SystemExit(0)
+        _ensure_dracut_no_nvidia_conf()
+        _ensure_pci_numa_rule()
+        failed_optional: list[str] = []
+        for d in debs:
+            if _is_required(d.name):
+                run_sudo(["dpkg", "-i", str(d)])
+                continue
+            try:
+                run_sudo(["dpkg", "-i", str(d)])
+            except RuntimeError as e:
+                log.warn(f"optional package {d.name} failed to install — continuing: {e}")
+                failed_optional.append(d.name)
+        if failed_optional:
+            log.warn(
+                f"{len(failed_optional)} optional package(s) not installed: "
+                f"{', '.join(failed_optional)} — the kernel itself is unaffected"
+            )
+
+    # Verify initramfs was created by the dpkg postinst hook (dracut).
+    # A missing or tiny initrd = guaranteed kernel panic on first boot.
+    from ..version import hyphaed_uname_r
+    kver = hyphaed_uname_r(profile.running_kernel, profile.flavour, getattr(ctx, "source_mode", "ubuntu"))
+    if not ctx.dry_run:
+        _verify_or_repair_initramfs(kver)
+
+    # GRUB drop-in
+    from .. import presets as presets_mod
+    extra: list[str] = []
+    if ctx.preset:
+        try:
+            preset = presets_mod.load(ctx.preset)
+            extra = preset.cmdline_extra
+        except Exception:
+            pass
+    current = grub.read_current_cmdline_config()
+    # Skip keys already configured elsewhere (greenboost edits /etc/default/grub
+    # directly) so we don't emit double tokens.
+    cmdline = grub.compose_cmdline(profile, extra, skip_keys_present_in=current)
+    log.info("kernel cmdline diff (current → after drop-in applied):")
+    grub.print_cmdline_diff(current, cmdline)
+
+    path, changed = grub.write_dropin(cmdline, dry_run=ctx.dry_run)
+    label_changed = grub.write_label_dropin(dry_run=ctx.dry_run)
+    if (changed or label_changed) and not ctx.dry_run:
+        grub.update_grub(dry_run=ctx.dry_run)
+
+    # Pin the just-installed kernel as the explicit GRUB default so a future
+    # `update-grub` menu regeneration can't silently change what boots by
+    # default (found live 2026-07-30: grubenv's saved_entry pointed at a
+    # kernel version no longer installed, booting only via GRUB's
+    # fallback-to-newest behavior, not an explicit pin). Downstream of the
+    # "proceed with installation?" confirm gate above — same discipline as
+    # the GRUB drop-in/update-grub calls it sits alongside.
+    grub.pin_default_kernel(kver, dry_run=ctx.dry_run)
+
+    log.ok(f"installed kernel: {ctx.kernel_pkgver}")

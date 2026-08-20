@@ -1,0 +1,23 @@
+name: safe
+description: |
+  Safe / conservative: no out-of-tree patches, only config fragments.
+  Useful as a fallback when an upstream patch breaks against a new kernel.
+
+fragments:
+  - 20-mitigations-on.config
+  - 30-mm-thp-mglru.config
+  - 31-mm-zswap-zstd.config
+  - 40-iommu-vfio.config
+  - 41-kvm-nested.config
+  - 42-io-uring-bpf.config
+  - 50-net-bbr-fq.config
+  - 60-nvidia-wayland.config
+  - 61-no-amdgpu-no-nouveau.config
+  - 70-greenboost-required.config
+
+cmdline_extra: []
+patches: []
+dkms_modules:
+  - nvidia-dkms
+  - greenboost
+  - vmware-host-modules
