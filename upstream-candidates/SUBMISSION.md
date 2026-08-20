@@ -1,4 +1,23 @@
-# Submission status for 0019 and 0020 (2026-08-18)
+# Submission status
+
+## Sent to LKML
+
+| Patch | Sent | Lists | Message-ID | Thread |
+|---|---|---|---|---|
+| `0021` PCI/sysfs docs | 2026-08-20 20:42 CEST | linux-pci, linux-api, linux-kernel | `20260820184228.166566-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-pci/20260820184228.166566-1-ferran.duarri@me.com/> |
+
+Sent with `git send-email` via `smtp.mail.me.com`, SMTP result 250, `To:` Bjorn
+Helgaas with the three lists in `Cc:`. The patch moved from `outbox/` to
+`sent/` on send. `0017` and `0019` are still in `outbox/`; see `outbox/SEND.md`
+for the order and the reason `0019` goes last.
+
+All submissions by this author, across every list lore archives:
+<https://lore.kernel.org/all/?q=f:ferran.duarri@me.com>
+
+Review queue for the PCI subsystem:
+<https://patchwork.kernel.org/project/linux-pci/list/>
+
+## Readiness for 0019 and 0020 (2026-08-18)
 
 `docs/ferran_custom_patches/PUBLISHING.md` covers the mechanics: LKML via `b4`
 for originals, the public downloadable collection for all 20 with attribution

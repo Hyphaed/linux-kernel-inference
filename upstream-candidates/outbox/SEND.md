@@ -1,7 +1,10 @@
 # Outbox , ready to send, not sent
 
-Three patches, each verified against the kernel's own gates on the 7.1 tree in
-`linux/`. `0020` is deliberately **not** here; see `../SUBMISSION.md`.
+Two patches left. `0021` was sent to linux-pci on 2026-08-20 and now lives in
+`../sent/`; its message-id is recorded in `../SUBMISSION.md`. `0020` is
+deliberately not here at all; same file explains why.
+
+Each was verified against the kernel's own gates on the 7.1 tree in `linux/`.
 
 Everything below is authored `Ferran Duarri <ferran.duarri@me.com>` with a
 matching `Signed-off-by:`, enforced by `tests/test_patch_authorship.py`.
