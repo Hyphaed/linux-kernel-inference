@@ -204,13 +204,14 @@ why a checkout is a few megabytes rather than a couple of hundred gigabytes.
 `patches/VENDOR.lock` pins every source by sha256, and `$KI_ROOT` in those
 lock files expands to your checkout, so the same lock resolves on any machine.
 
-## Scope, honestly
+## Scope, for context ; currently used hardware
 
-This is built and run on one machine: an RTX 5070 12 GB VRAM, PCIe 4.0 x16, 64 GB
-DDR4. The config fragments are selected from detected topology rather than
-hardcoded, and the patch series is generic, but "works here" is the only claim
-that has been earned. If you run it somewhere else, the interesting part is
-where it disagrees with your hardware.
+This is being built, tested, and used primarily on two machines, 
+with the desktop being used by far the most:
+
+desktop node; RTX 5070 12Gb VRAM, PCIe 4.0 x16, 64GB DDR4, i9 14900KF
+mobile node; RTX mobile 5070 8Gb VRAM, PCIe 5.0 x16, 32GB DDR5, Ryzen AI9 365
+
 
 ## License
 
