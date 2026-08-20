@@ -14,15 +14,17 @@ aimed at upstream.
 
 The build tool is called `hyphaed`.
 
-## What this contributes, and what it buys local inference
+## What this contributes
 
-Most of what is here is other people's work, curated and pinned: sixteen of the
+
+
+Hyphaed Kernel includes 4 patches made by Ferran Duarri as of 21 Aug 01:31, each one closes a gap that costs a local inference workstation something measurable.
+
+Hyphaed Kernel includes other people's work, curated and pinned: sixteen of the
 twenty patches in the default series come from CachyOS, XanMod and TKG, with
 attribution intact and every source recorded by sha256 in
 `patches/VENDOR.lock`.
 
-Four are ours, and each one closes a gap that costs a local inference box
-something measurable.
 
 ### A generic reclaim-priority hint for dma-buf (`0019`)
 
@@ -65,7 +67,7 @@ how an importer should inflate it, so "compressed" becomes an alternative to
 
 **What it buys local inference.** A cold mixture-of-experts expert can stay
 resident and compressed instead of being dropped and re-fetched across the
-host-to-device link the next time routing selects it. On the reference box that
+host-to-device link the next time routing selects it. On the reference workstation that
 link measures ~11-12 GB/s, so not paying the re-fetch is worth more than the
 RAM the compression saves. It composes with `0019` without depending on it:
 that patch says which buffers to keep, this one lets an exporter that kept one
@@ -111,14 +113,14 @@ x16 slot, same boot, no configuration change between reads: **5.0 GT/s idle,
 GreenBoost built that false alarm and shipped it: its `pcie_degraded` check
 fired thirteen times claiming a gen2 link on a connection that measures Gen4
 x16 whenever it is actually being used, because the guard sampled at idle.
-Anyone tuning a PCIe-bound inference box can now tell a real problem from power
+Anyone tuning a PCIe-bound inference workstation can now tell a real problem from power
 management doing its job.
 
 **Status: ready to send.** No behaviour changes.
 
 ### The kernel build itself
 
-Beyond the originals, the curated series covers what a box holding a large
+Beyond the originals, the curated series covers what a workstation holding a large
 model resident and reading it hard actually needs, where a stock kernel assumes
 a desktop: BORE scheduling, BBR3, vmscan and VFS-cache behaviour under
 sustained memory pressure, `max_map_count`, timer frequency, block-layer
@@ -133,37 +135,6 @@ as an RFC with its blocker stated up front, and `0020` is deliberately held.
 `upstream-candidates/SUBMISSION.md` records that judgement per patch so it does
 not have to be re-argued from memory.
 
-## Authorship
-
-Every patch we wrote is authored `Ferran Duarri <ferran.duarri@pm.me>` and
-carries a matching `Signed-off-by:`, whether or not it is ever sent upstream.
-The sign-off is not style: it is the attestation required by the kernel's
-Developer's Certificate of Origin, and a patch without one cannot be applied.
-
-Third-party patches keep their original authorship. Rewriting an upstream
-author's name would be misattribution, which is the opposite of what the rule
-is for.
-
-`tests/test_patch_authorship.py` enforces both halves, including that the
-sign-off sits above the `---` separator, since `git am` silently drops trailers
-below it.
-
-## The investigation that found nothing
-
-`upstream-candidates/pcie-bwctrl-stale-target-speed/` is not a patch. It is a
-theory that did not survive its own diagnostic script, kept in full.
-
-The theory was a stale cached target speed that one sysfs write would correct.
-Running the script: before the "fix", the live read was 5.0 GT/s. After writing
-`cur_state=0` to request maximum speed, it read **2.5 GT/s**, worse. Seconds
-later, with nothing further done, it was back to 16.0 GT/s on its own. A
-ten-sample poll with no writes at all showed the link cycling through
-2.5 / 5.0 / 16.0 GT/s inside a ten-second idle window, while `nvidia-smi`
-showed the GPU's own power state cycling P3/P5/P8 alongside it.
-
-The link was doing exactly what it should. There is no bug, so there is no
-patch. The governing rule in the plan this belongs to is "only patch what you
-can prove helps", and this never met it.
 
 ## Layout
 
