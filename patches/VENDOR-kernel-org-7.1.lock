@@ -37,7 +37,7 @@
 # or useless (include/linux/tcp.h)" on kernel.org 7.1.2 — tcp.h changed enough
 # that --3way could not resolve. The xanmod 7.1.2 commit applies cleanly.
 # Verified: git apply --check passes against vanilla 7.1.2 + BORE.
-../0002-xanmod-bbr3.patch  file://$KI_ROOT/patches/0002-xanmod-bbr3.patch  0dbd3a294dcf83a62f239ce076d605052a9307b54f485f282467d68e3dbd285d  local-file
+../0002-xanmod-bbr3.patch  file://$KI_ROOT/patches/0002-xanmod-bbr3.patch  6a40e13c2f24465e1126886bcd04f585cd9c133d51a758022046669820aa60ba  local-file
 
 # ─── XanMod: zen-style tunings (re-pinned to origin/7.1 commits) ─────────────
 # NOTE: 0006-xanmod-fair-sched-latency-unscaled (commit bc8670f50cb9) was
@@ -59,8 +59,8 @@
 
 # ─── Reused unchanged from the Ubuntu/7.0.x series (patches/custom/) ────────
 0012-tkg-pci-pme-timeout.patch             file://$KI_ROOT/patches/custom/0014-tkg-pci-pme-timeout.patch  96b7670e0d5bcf01ff2333a743e86f340638390d6ad8966368e64ec323b08beb  local-file
-0013-nvme-lower-default-apst-latency.patch file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch  50c1f5777237cdc0de68eeeb2d39b7af9b38340461bf8cfeb8e90c915254dd99  local-file
-0014-mm-thp-defrag-defer-madvise-default.patch file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch  526a9e594d94a24ffabf237219eb2f3c94c82654153c6c4edf7c82e035215a17  local-file
+0013-nvme-lower-default-apst-latency.patch file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch  2cf945009ce239d24afc9aacd336804469fc6abc403705755919d9a06987109d  local-file
+0014-mm-thp-defrag-defer-madvise-default.patch file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch  a3e74f63996e9ac8002811a3ddecfea72af2a590cc62162cadfc9861b0ed5ce9  local-file
 0015-kbuild-ubsan-extmod-opt-in.patch          file://$KI_ROOT/patches/kernel-org-7.1/0015-kbuild-ubsan-extmod-opt-in.patch  2bb001635efafa4f342f7feb7c5d5e3964aec8c7cd29564aa40af8e8d168c793  local-file
 
 # ─── TKG: PCIe ACS override (forward-ported to 7.1.3, 2026-07-09) ───────────
@@ -74,7 +74,7 @@
 
 # ─── hyphaed: generic dma-buf reclaim-priority hint (own RFC, drafted this
 # session) — see upstream-candidates/dma-buf-priority-hint/README.md ────────
-0019-dma-buf-priority-hint.patch          file://$KI_ROOT/patches/custom/0019-dma-buf-priority-hint.patch  0e932f9840d65f5b4d1e3113622162cccb88d590ff1ab4adb241f79bcd9f7d0a  local-file
+0019-dma-buf-priority-hint.patch          file://$KI_ROOT/patches/custom/0019-dma-buf-priority-hint.patch  c9b1ad1e58cdc059d1a6fdd7da5a60d6dac7f1f7e6277f9e33ff6d7c30eb364d  local-file
 
 # ─── hyphaed: generic dma-buf compressed-content descriptor (own RFC,
 # drafted 2026-08-10, sibling of 0019 above) — see
@@ -85,4 +85,4 @@
 # 7.1.8 kernel-org clone, then compile-tested from that exact stacked tree
 # (drivers/dma-buf/dma-buf.o + drivers/gpu/drm/drm_prime.o), checkpatch
 # clean (0 errors, 0 warnings) ────────────────────────────────────────────
-0020-dma-buf-compressed-descriptor.patch  file://$KI_ROOT/patches/custom/0020-dma-buf-compressed-descriptor.patch  b9d7067d693cd9bb9c05f798ee93fb53bcb1357ae6ba569dd6cf9de17a979559  local-file
+0020-dma-buf-compressed-descriptor.patch  file://$KI_ROOT/patches/custom/0020-dma-buf-compressed-descriptor.patch  f0aecf78978fc2c1199ffb3dd08802ae5187aa3b2db60636c34d9546ee444ea2  local-file

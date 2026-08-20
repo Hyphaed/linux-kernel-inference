@@ -14,116 +14,139 @@ aimed at upstream.
 
 The build tool is called `hyphaed`.
 
-## The honest summary first
+## What this contributes, and what it buys local inference
 
-Most of what is here is other people's work, curated and pinned. Sixteen of the
+Most of what is here is other people's work, curated and pinned: sixteen of the
 twenty patches in the default series come from CachyOS, XanMod and TKG, with
-attribution intact and every source recorded by sha256 in `patches/VENDOR.lock`.
+attribution intact and every source recorded by sha256 in
+`patches/VENDOR.lock`.
 
-Four patches are original. Of those:
+Four are ours, and each one closes a gap that costs a local inference box
+something measurable.
 
-- one is a straightforward bug fix,
-- one is an RFC worth sending, with a blocker its own cover letter has to admit,
-- one is finished, works, and **should not be sent yet**,
-- one is documentation for sysfs attributes that have been undocumented since
-  2018.
+### A generic reclaim-priority hint for dma-buf (`0019`)
 
-There is also a fifth investigation that concluded **there is no bug**, kept in
-the repository because a disproved theory is worth writing down.
-
-## Why a custom kernel at all
-
-Not for a benchmark score. Three concrete reasons, all from running GreenBoost:
-
-**External modules were being built with sanitizer flags they never asked for.**
-Any `obj-m` object inherits the kernel's UBSAN `KBUILD_CFLAGS`, because
-`is-kernel-object` is `y` for external modules too. Third-party modules whose
-code trips a UBSAN check then misbehave at runtime while loading perfectly
-cleanly, which is the worst combination for diagnosis. This bit VMware's
-`vmnet`/`vmmon` visibly, with packet forwarding failing and VMs destabilising.
-`0017-kbuild-ubsan-extmod-opt-in.patch` makes UBSAN opt-in for external
-modules; in-tree builds are untouched, and a module that wants it can still set
-`UBSAN_SANITIZE := y`.
-
-**Scheduling and memory defaults are tuned for a desktop, and an inference box
-is not one.** The curated series covers that: BORE scheduling, BBR3, vmscan and
-VFS-cache behaviour under sustained pressure, `max_map_count`, timer frequency,
-block-layer latency and mq-deadline tuning, THP defrag defaults. Config
-fragments in `configs/fragments/` handle the rest, selected against what the
-machine actually reports rather than a fixed profile.
-
-**dma-buf cannot express memory tiering.** This one is the reason two of the
-four originals exist, and it needs its own section.
-
-## The dma-buf gap, and how GreenBoost hit it
-
-GreenBoost pins system RAM as DMA-BUF hugepages and hands it to CUDA, so the
-GPU reads weights straight out of DDR over PCIe. Pages pinned through
-`pin_user_pages()`/`FOLL_LONGTERM` sit outside the normal reclaim path by
-design. That is correct, and it leaves a hole: when memory gets tight, nothing
-generic lets an exporter say *which* of its pinned buffers should be given up
-first.
-
-A KV cache re-read on every decode step and a cold expert's weights are not
-equally valuable, and only the exporter knows that. dma-buf has nowhere to put
-the distinction.
-
-So GreenBoost invented its own. It carries a `gaming_mode` module parameter, a
-per-buffer heat score pushed continuously from the CUDA shim via a private
-`GB_IOCTL_SET_HEAT` ioctl, and its own LRU that the module reorders under
-pressure. All of that is a workaround for one missing generic hint, and every
-other out-of-tree tiering driver has to invent the same thing differently.
-
-That is the argument for `0019-dma-buf-priority-hint.patch`: an advisory
-`atomic_t` on `struct dma_buf`, `0..255`, default `128`, lower reclaimed
-earlier. Two exported helpers, two ioctls so userspace holding an fd can do the
-same, and the value reported via fdinfo. A hint, not a policy: dma-buf core
-implements no reclaim of its own, it only stores the number for exporters that
+Adds an advisory `priority` field to `struct dma_buf`: `0..255`, default `128`,
+lower reclaimed earlier. Two exported helpers, two ioctls so userspace holding
+an fd can set it, and the current value reported through fdinfo. dma-buf core
+implements no reclaim of its own; it stores the number for exporters that
 already have a reclaim path.
 
-**The blocker, stated plainly.** The only user is an out-of-tree module. Adding
-UAPI with no in-tree user is normally declined, and that is the right call:
-UAPI is forever, and nothing in-tree constrains the semantics or proves the
-design survives a second consumer. The cover letter has to lead with this
-rather than bury it. `greenboost.ko` does now genuinely *read*
-`dma_buf_get_priority()` in its T2 eviction sweep instead of only writing it,
-which makes the submission honest, and does not remove the blocker.
+This is the first generic way for any dma-buf exporter to rank its own pinned
+buffers.
 
-`0020-dma-buf-compressed-descriptor.patch` is the sibling. GreenBoost keeps
-cold mixture-of-experts weights compressed in place rather than evicting them,
-because re-fetching over PCIe costs more than inflating locally. An importer
-has no standard way to be told "this buffer is compressed, here is how to read
-it back". The patch adds that descriptor.
+**What it buys local inference.** Memory pinned through
+`pin_user_pages()`/`FOLL_LONGTERM` sits outside normal reclaim by design, so
+when RAM gets tight nothing could distinguish a KV cache that is re-read on
+every single decode step from a cold expert's weights that may not be touched
+again this generation. They are not equally valuable and only the exporter
+knows it. With the hint, the buffer whose loss costs you tokens per second is
+the one that survives pressure.
 
-**It is finished and it should not be sent.** There is no in-kernel reader and
-no in-kernel producer of the state it describes. Sending it now would spend
-reviewer attention on an API nothing can exercise. It stays here, applied
-locally, until that changes. `upstream-candidates/SUBMISSION.md` records that
-assessment, patch by patch, so the decision does not have to be re-argued from
-memory.
+The alternative is what everyone does today: invent a private ioctl. GreenBoost
+carries a `gaming_mode` module parameter, a per-buffer heat score pushed
+continuously from its CUDA shim through a private `GB_IOCTL_SET_HEAT`, and its
+own LRU it reorders under pressure. All of that expresses one missing hint, in
+a form nothing else can read. `greenboost.ko` consumes the generic version
+today in its T2 eviction sweep.
 
-## The measurement that was lying
+**Status: ready to send as an RFC, and the cover letter leads with its own
+blocker.** The only consumer is out-of-tree. Adding UAPI with no in-tree user
+is normally declined, and that is the correct call, since UAPI is permanent and
+nothing in-tree would constrain the semantics or prove the design survives a
+second consumer. The realistic outcomes are that someone with an in-tree use
+case redesigns it, or it is declined pending one. Both are useful.
 
-`0021-pci-sysfs-document-link-speed-width-attrs.patch` is documentation, and it
-exists because of a misdiagnosis.
+### A compressed-content descriptor for dma-buf (`0020`)
+
+Lets an exporter that has compressed a buffer's backing memory in place publish
+how an importer should inflate it, so "compressed" becomes an alternative to
+"evicted" rather than a private arrangement.
+
+**What it buys local inference.** A cold mixture-of-experts expert can stay
+resident and compressed instead of being dropped and re-fetched across the
+host-to-device link the next time routing selects it. On the reference box that
+link measures ~11-12 GB/s, so not paying the re-fetch is worth more than the
+RAM the compression saves. It composes with `0019` without depending on it:
+that patch says which buffers to keep, this one lets an exporter that kept one
+say how it kept it.
+
+**Status: finished, compile-tested, applied locally, and deliberately not
+submitted.** There is no in-kernel reader and no in-kernel producer of the
+state it describes. Sending it now would spend reviewer attention on an API
+nothing can exercise.
+
+### UBSAN made opt-in for external modules (`0017`)
+
+Any `obj-m` object inherited the kernel's UBSAN `KBUILD_CFLAGS`, because
+`is-kernel-object` evaluates to `y` for external modules too. This makes UBSAN
+opt-in for external builds; in-tree builds are untouched, and an external
+module that wants sanitizers sets `UBSAN_SANITIZE := y` itself.
+
+**What it buys local inference.** Out-of-tree GPU and memory-tiering modules
+stop inheriting instrumentation they never asked for. The failure this produced
+is the hardest kind to attribute: the module builds, loads cleanly, reports no
+error, and then misbehaves at runtime. Observed against VMware's
+`vmnet`/`vmmon`, with packet forwarding failing and VMs destabilising;
+`greenboost.ko` is an external module in the same blast radius.
+
+**Status: a straightforward bug fix, not a hint or a new interface.**
+
+### Documentation/ABI for four PCI link attributes (`0021`)
 
 `max_link_speed`, `max_link_width`, `current_link_speed` and
 `current_link_width` have been exported under `/sys/bus/pci/devices/.../` since
-2018, and none of the four appear anywhere in `Documentation/ABI`.
-`current_link_speed_show()` performs a fresh `PCI_EXP_LNKSTA` read on every
-open, so it reports the link state at that instant. Modern GPUs retrain their
-link constantly as part of idle power management.
+2018 and appear nowhere in `Documentation/ABI`. This documents them, and
+records in particular that `current_link_speed_show()` performs a fresh
+`PCI_EXP_LNKSTA` read on every open.
 
-Which means comparing `current_link_speed` against `max_link_speed` reads
-exactly like a test for a degraded link, and is not one. Measured on an
-RTX 5070 in a PCIe 4.0 x16 slot, same boot, no configuration change between
-reads: **5.0 GT/s idle, 16.0 GT/s under load.**
+**What it buys local inference.** It kills a whole class of false diagnosis.
+Modern GPUs retrain their link constantly as part of idle power management, so
+a single read can legitimately return any speed the link supports. Comparing
+`current_link_speed` against `max_link_speed` therefore reads exactly like a
+test for a degraded link and is not one. Measured on an RTX 5070 in a PCIe 4.0
+x16 slot, same boot, no configuration change between reads: **5.0 GT/s idle,
+16.0 GT/s under load.**
 
-GreenBoost got this wrong in production. Its `pcie_degraded` alarm fired
-thirteen times claiming a gen2 link on a connection that measures Gen4 x16
-whenever it is actually being used. The patch does not change any behaviour; it
-writes down what the attribute means so the next person does not build the same
-false alarm.
+GreenBoost built that false alarm and shipped it: its `pcie_degraded` check
+fired thirteen times claiming a gen2 link on a connection that measures Gen4
+x16 whenever it is actually being used, because the guard sampled at idle.
+Anyone tuning a PCIe-bound inference box can now tell a real problem from power
+management doing its job.
+
+**Status: ready to send.** No behaviour changes.
+
+### The kernel build itself
+
+Beyond the originals, the curated series covers what a box holding a large
+model resident and reading it hard actually needs, where a stock kernel assumes
+a desktop: BORE scheduling, BBR3, vmscan and VFS-cache behaviour under
+sustained memory pressure, `max_map_count`, timer frequency, block-layer
+latency and mq-deadline tuning, THP defrag defaults. Config fragments in
+`configs/fragments/` are selected against what the machine reports rather than
+a fixed profile.
+
+### Upstream status, in one place
+
+None of these are merged. `0021` and `0017` are ready to send, `0019` is ready
+as an RFC with its blocker stated up front, and `0020` is deliberately held.
+`upstream-candidates/SUBMISSION.md` records that judgement per patch so it does
+not have to be re-argued from memory.
+
+## Authorship
+
+Every patch we wrote is authored `Ferran Duarri <ferran.duarri@pm.me>` and
+carries a matching `Signed-off-by:`, whether or not it is ever sent upstream.
+The sign-off is not style: it is the attestation required by the kernel's
+Developer's Certificate of Origin, and a patch without one cannot be applied.
+
+Third-party patches keep their original authorship. Rewriting an upstream
+author's name would be misattribution, which is the opposite of what the rule
+is for.
+
+`tests/test_patch_authorship.py` enforces both halves, including that the
+sign-off sits above the `---` separator, since `git am` silently drops trailers
+below it.
 
 ## The investigation that found nothing
 

@@ -1,4 +1,4 @@
-From: hyphaed workstation tuning <noreply@local>
+From: Ferran Duarri <ferran.duarri@pm.me>
 Date: Mon, 01 Jan 2024 00:00:00 +0000
 Subject: [PATCH] mm: default THP defrag to defer+madvise instead of madvise
 
@@ -22,6 +22,7 @@ Redis/MongoDB-style THP=always workloads). Runtime-overridable via
 patch only changes the compiled-in default.
 
 Forward-Port-Notes: mm/huge_memory.c (transparent_hugepage_flags initializer)
+Signed-off-by: Ferran Duarri <ferran.duarri@pm.me>
 ---
  mm/huge_memory.c | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
