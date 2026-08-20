@@ -206,7 +206,7 @@ lock files expands to your checkout, so the same lock resolves on any machine.
 
 ## Scope, honestly
 
-This is built and run on one machine: an RTX 5070, 12 GB, PCIe 4.0 x16, 64 GB
+This is built and run on one machine: an RTX 5070 12 GB VRAM, PCIe 4.0 x16, 64 GB
 DDR4. The config fragments are selected from detected topology rather than
 hardcoded, and the patch series is generic, but "works here" is the only claim
 that has been earned. If you run it somewhere else, the interesting part is
