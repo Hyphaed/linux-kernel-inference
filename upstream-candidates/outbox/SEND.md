@@ -3,7 +3,7 @@
 Three patches, each verified against the kernel's own gates on the 7.1 tree in
 `linux/`. `0020` is deliberately **not** here; see `../SUBMISSION.md`.
 
-Everything below is authored `Ferran Duarri <ferran.duarri@pm.me>` with a
+Everything below is authored `Ferran Duarri <ferran.duarri@me.com>` with a
 matching `Signed-off-by:`, enforced by `tests/test_patch_authorship.py`.
 
 ## Status of each
@@ -22,27 +22,58 @@ That is the accepted exception. A commit reference must not be wrapped, so the
 75-column preference does not apply to it, and wrapping it to satisfy
 checkpatch produces a hard ERROR instead (verified, both ways).
 
-## Prerequisite: your mail account
+## Prerequisite: the one thing that is not done
 
-`git send-email` needs SMTP credentials that only you should hold. Configure
-once, in your own environment:
+`git send-email` is already configured in this repo, and it is the only send
+path used here. Thunderbird was considered and dropped: the kernel's own
+`Documentation/process/email-clients.rst` opens by calling it "an Outlook clone
+that likes to mangle text", and it needs two extensions plus an external editor
+before it can send a patch safely.
 
-    git config --global sendemail.smtpServer        smtp.your-provider
-    git config --global sendemail.smtpUser          ferran.duarri@pm.me
-    git config --global sendemail.smtpEncryption    tls
-    git config --global sendemail.smtpServerPort    587
+Current config, verified:
 
-Do NOT put the password in git config. `git send-email` will prompt, or read
-it from your keyring.
+    sendemail.smtpserver      smtp.mail.me.com
+    sendemail.smtpuser        ferran.duarri@me.com
+    sendemail.smtpserverport  587
+    sendemail.smtpencryption  tls
+    sendemail.from            Ferran Duarri <ferran.duarri@me.com>
+    sendemail.confirm         always
+    sendemail.annotate        yes
 
-**Send yourself a test first.** A malformed From:, a mangled patch, or an
-SMTP server that rewrites headers is invisible until it hits a public list,
-and a list post cannot be unsent:
+**What is missing is the password, and only you can supply it.** iCloud rejects
+your Apple ID password over SMTP; it requires an app-specific password, created
+at <https://appleid.apple.com> under Sign-In and Security. `git send-email`
+prompts for it at send time. Do not put it in git config , this file is
+committed and pushed.
 
-    git send-email --to=ferran.duarri@pm.me --dry-run 0021-*.patch   # inspect headers
-    git send-email --to=ferran.duarri@pm.me 0021-*.patch             # real, to yourself
+**Send yourself a test first.** A mangled patch or a header-rewriting server is
+invisible until it hits a public list, and a list post cannot be unsent:
 
-Open what arrives and confirm `git am` applies it cleanly before going public.
+    cd ~/Dev/kernel_inference/upstream-candidates/outbox
+    git send-email --to=ferran.duarri@me.com --dry-run 0021-*.patch   # headers only
+    git send-email --to=ferran.duarri@me.com 0021-*.patch             # real, to yourself
+
+Open what arrives, save it, and confirm `git am` applies it cleanly before
+going public.
+
+### Already verified here
+
+Applied on a clean 7.1 base (no series commits present), all three in order:
+
+    git am 0021-*.patch 0017-*.patch 0019-*.patch
+    -> 3 commits, each Ferran Duarri <ferran.duarri@me.com>
+
+So a maintainer's first action succeeds. What is untested is the mail path
+itself, which is exactly what the self-test above covers.
+
+Recipients re-checked against the 7.1 `MAINTAINERS` with `get_maintainer.pl`:
+the lists below for `0017` and `0019` match it exactly. `0021` under-resolves to
+the open list only, so its recipients come from the `PCI SUBSYSTEM` entry
+directly , confirmed as Bjorn Helgaas and `linux-pci@vger.kernel.org`.
+
+`linaro-mm-sig@lists.linaro.org` (on `0019`) is a **moderated** list. A post
+from a non-subscriber sits in a moderation queue rather than bouncing, so
+silence there is not a delivery failure. The other lists are open.
 
 ## 1. `0021` , PCI/sysfs documentation
 

@@ -1,5 +1,5 @@
 From cdc35b2e76dfa39b02e004d5d6d959567269f2a7 Mon Sep 17 00:00:00 2001
-From: Ferran Duarri <ferran.duarri@pm.me>
+From: Ferran Duarri <ferran.duarri@me.com>
 Date: Thu, 20 Aug 2026 15:31:54 +0200
 Subject: [PATCH] PCI/sysfs: document the link speed and width attributes
 
@@ -31,7 +31,7 @@ attributes.
 No functional change.
 
 Forward-Port-Notes: Documentation/ABI/testing/sysfs-bus-pci
-Signed-off-by: Ferran Duarri <ferran.duarri@pm.me>
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
 ---
  Documentation/ABI/testing/sysfs-bus-pci | 65 +++++++++++++++++++++++++
  1 file changed, 65 insertions(+)

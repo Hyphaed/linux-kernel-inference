@@ -1,5 +1,5 @@
 From 1fee0565022c6d2ecab51baa04a728f3df3baacb Mon Sep 17 00:00:00 2001
-From: Ferran Duarri <ferran.duarri@pm.me>
+From: Ferran Duarri <ferran.duarri@me.com>
 Date: Mon, 10 Aug 2026 13:11:13 +0200
 Subject: [RFC PATCH] dma-buf: add a generic compressed-content descriptor
 
@@ -64,7 +64,7 @@ that doesn't opt in. No existing dma_buf_ops callback is touched.
 Compile-tested (drivers/dma-buf/dma-buf.o) stacked on top of the full
 0001-0019 series against a real 7.1.8 kernel-org tree.
 
-Signed-off-by: Ferran Duarri <ferran.duarri@pm.me>
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
 ---
  drivers/dma-buf/dma-buf.c    | 72 ++++++++++++++++++++++++++++++++++++
  include/linux/dma-buf.h      | 42 +++++++++++++++++++++

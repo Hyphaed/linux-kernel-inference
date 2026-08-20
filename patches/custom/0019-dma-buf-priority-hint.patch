@@ -1,5 +1,5 @@
 From b6097ab1cfe7ab7068e0894012886d71a53cba18 Mon Sep 17 00:00:00 2001
-From: Ferran Duarri <ferran.duarri@pm.me>
+From: Ferran Duarri <ferran.duarri@me.com>
 Date: Sun, 26 Jul 2026 19:10:52 +0200
 Subject: [RFC PATCH] dma-buf: add a generic reclaim-priority hint
 
@@ -47,7 +47,7 @@ No existing dma_buf_ops callback is touched. Compile-tested: drivers/
 dma-buf/ (incl. the selftest module) and drivers/gpu/drm/drm_prime.o
 both build clean against this change.
 
-Signed-off-by: Ferran Duarri <ferran.duarri@pm.me>
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
 ---
  drivers/dma-buf/dma-buf.c    | 51 ++++++++++++++++++++++++++++++++++++
  include/linux/dma-buf.h      | 26 ++++++++++++++++++

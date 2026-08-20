@@ -1,4 +1,4 @@
-From: Ferran Duarri <ferran.duarri@pm.me>
+From: Ferran Duarri <ferran.duarri@me.com>
 Date: Mon, 01 Jan 2024 00:00:00 +0000
 Subject: [PATCH] nvme: lower default APST max latency for desktop/workstation use
 
@@ -17,7 +17,7 @@ or via `nvme_core.default_ps_max_latency_us=<N>` on the cmdline — this
 patch only changes the compiled-in default for the common case.
 
 Forward-Port-Notes: drivers/nvme/host/core.c (module_param default)
-Signed-off-by: Ferran Duarri <ferran.duarri@pm.me>
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
 ---
  drivers/nvme/host/core.c | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

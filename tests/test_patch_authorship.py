@@ -10,6 +10,13 @@ Project rule (2026-08-20). Two separate requirements, both mandatory:
    work we did. The kernel also wants a real full name, so the single-word
    `Ferran` form would not have been acceptable on submission either.
 
+   The address is `@me.com` because that is the account patches are SENT
+   from. iCloud publishes a strict DMARC policy, so a patch whose `From:`
+   said `@pm.me` leaving an `smtp.mail.me.com` server would be misaligned,
+   and vger's lists may reject or rewrite it. Author and envelope sender
+   must be the same address, and it is the address that goes into Linux git
+   history permanently, so it has to be one that receives mail.
+
 2. **Signed-off-by.** This is not style. It is the attestation required by
    the kernel's Developer's Certificate of Origin, and a patch without it
    cannot be applied by a maintainer. `0017` had none at all and would have
@@ -27,7 +34,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-AUTHOR = "Ferran Duarri <ferran.duarri@pm.me>"
+AUTHOR = "Ferran Duarri <ferran.duarri@me.com>"
 SOB = f"Signed-off-by: {AUTHOR}"
 
 # Ours. Everything else under patches/ is somebody else's work.

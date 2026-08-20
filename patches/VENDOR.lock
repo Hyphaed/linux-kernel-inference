@@ -36,11 +36,11 @@
 0014-tkg-pci-pme-timeout.patch  file://$KI_ROOT/patches/custom/0014-tkg-pci-pme-timeout.patch  96b7670e0d5bcf01ff2333a743e86f340638390d6ad8966368e64ec323b08beb  local-file
 
 # ─── hyphaed: workstation-specific defaults (i9-14900KF / RTX5070 / NVMe) ────
-0015-nvme-lower-default-apst-latency.patch     file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch     2cf945009ce239d24afc9aacd336804469fc6abc403705755919d9a06987109d  local-file
-0016-mm-thp-defrag-defer-madvise-default.patch file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch a3e74f63996e9ac8002811a3ddecfea72af2a590cc62162cadfc9861b0ed5ce9  local-file
+0015-nvme-lower-default-apst-latency.patch     file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch     23b1420a902d48f877fffdef6f0a98349f7847278b3bea25a1a40a63ce3434c3  local-file
+0016-mm-thp-defrag-defer-madvise-default.patch file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch 328bf8de4d418904ae3a98834c792ab3fb15ebfa39b1e734807ce03dac3823e2  local-file
 
 # ─── kbuild: UBSAN opt-in for external modules (VMware/vmnet fix) ─────────────
-0017-kbuild-ubsan-extmod-opt-in.patch  file://$KI_ROOT/patches/custom/0017-kbuild-ubsan-extmod-opt-in.patch  056999b94d1a20911cb06c533161ba7131a0ab5d0aea6b8277541bcbeeecdb5e  local-file
+0017-kbuild-ubsan-extmod-opt-in.patch  file://$KI_ROOT/patches/custom/0017-kbuild-ubsan-extmod-opt-in.patch  63d25d0788d7ffbd8bef32c10c47ee6570e47266b7c5ca380bedca84f9e3fd80  local-file
 
 # ─── TKG (orig. Alex Williamson/lkml): PCIe ACS override ─────────────────────
 # Enables pcie_acs_override= boot param — needed for clean IOMMU groups on
@@ -54,4 +54,4 @@
 
 # ─── hyphaed: generic dma-buf reclaim-priority hint (own RFC, drafted this
 # session) — see upstream-candidates/dma-buf-priority-hint/README.md ────────
-0019-dma-buf-priority-hint.patch  file://$KI_ROOT/patches/custom/0019-dma-buf-priority-hint.patch  c9b1ad1e58cdc059d1a6fdd7da5a60d6dac7f1f7e6277f9e33ff6d7c30eb364d  local-file
+0019-dma-buf-priority-hint.patch  file://$KI_ROOT/patches/custom/0019-dma-buf-priority-hint.patch  3bf3af3be9110b78a54a9862688aa4e67bfe18a1156646871797d9251397060a  local-file
