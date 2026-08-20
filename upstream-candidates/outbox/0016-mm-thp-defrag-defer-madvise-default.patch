@@ -30,6 +30,15 @@ This changes only the compiled-in default;
 /sys/kernel/mm/transparent_hugepage/defrag continues to accept every
 existing mode, including the current "madvise" behaviour.
 
+No stall measurement is offered with this patch. On the machine that
+prompted it the fault path never reaches direct compaction at all:
+thp_fault_alloc is 60682 against thp_fault_fallback 0, and compact_stall
+is 0, because memory has stayed abundant enough that no huge-page
+allocation has had to fall back. That makes the box unable to testify
+either way, and a number gathered under those conditions would measure
+nothing. The argument above is a correctness one about which knob the
+Kconfig choice is entitled to set, and it should be judged on that.
+
 Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
 ---
  mm/huge_memory.c | 2 +-

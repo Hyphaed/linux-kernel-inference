@@ -156,7 +156,46 @@ at , a module parameter for `0015`, a sysfs knob for `0016`. The standing
 answer to that shape of patch is "your machine can already set this, so set
 it", and it is a fair answer.
 
-What would change the outcome is evidence, and we do not have it yet:
+### Measured on this box, 2026-08-20
+
+Read before you claim a benefit, because one of these does not say what we
+expected.
+
+`0016`, THP. The premise checks out and the benefit does not, yet:
+
+    enabled: [always] madvise never          <- the config the argument needs
+    defrag:  always defer [defer+madvise]    <- patch active
+    compact_stall        0
+    thp_fault_alloc      60682
+    thp_fault_fallback   0
+
+Zero stalls in 4h21m looks like a win and is not one. Direct compaction is
+only entered when a THP allocation FAILS, and `thp_fault_fallback` is 0 , not
+one of 60682 huge-page faults had to fall back. With 46 GB of 64 GB available
+and swap untouched, unpatched `madvise` mode would have recorded 0 stalls too.
+**This box has never reached the condition the patch protects against**, so it
+cannot testify either way.
+
+So do not send `0016` as a performance fix. Send it as the correctness argument
+it actually is, which needs no benchmark: `CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS`
+and `_MADVISE` choose *whether* THP applies, the defrag flag chooses *how hard*
+the allocator works, and the initializer pins the second as though the first
+had decided it. That is reviewable on the code alone. State plainly that no
+stall measurement is offered and why , an untriggered path on the author's
+hardware is a better answer than a number that measured nothing.
+
+`0015`, NVMe. Device is a Samsung SSD 990 EVO Plus 4TB, fw 2B2QKXG7, and the
+running kernel already carries the patch (`default_ps_max_latency_us` reads
+25000). The decisive figure is the deepest non-operational state's exit
+latency, which needs root:
+
+    sudo nvme id-ctrl /dev/nvme0 -H | grep -A2 -iE '^ps  '
+
+If that state exits in well under 25ms the patch changes nothing on this
+device and the honest thing is to say so. If it approaches 100ms, that number
+IS the argument and belongs in the commit message.
+
+What would additionally change the outcome, for both:
 
 - `0015` needs a cold-read latency distribution on a device whose deepest
   non-operational state actually approaches the 100ms bound, at both settings.
