@@ -1,7 +1,7 @@
-# linux-kernel-inference
+# 🐧Hyphaed Kernel
 
-A Linux kernel built for running large models locally, and the patches that
-came out of doing it.
+A Linux kernel built while working on local AI inference, with patches created to extend GreenBoost capabilities and/or fix issues discovered during day-to-day work with AI pipelines.
+Includes patches (sent to kernel lists), yet not included elsewhere as of Aug 21, 00:46.
 
 This is the kernel side of [GreenBoost](https://gitlab.com/IsolatedOctopi/greenboost).
 GreenBoost extends a GPU's VRAM with system RAM and NVMe so a model bigger than
@@ -204,13 +204,14 @@ why a checkout is a few megabytes rather than a couple of hundred gigabytes.
 `patches/VENDOR.lock` pins every source by sha256, and `$KI_ROOT` in those
 lock files expands to your checkout, so the same lock resolves on any machine.
 
-## Scope, for context ; currently used hardware
+## 🖥️ Scope, for context ; currently used hardware
 
-This is being built, tested, and used primarily on two machines, 
+This is being built, tested, and used primarily on two machines,
 with the desktop being used by far the most:
-
 desktop node; RTX 5070 12Gb VRAM, PCIe 4.0 x16, 64GB DDR4, i9 14900KF
 mobile node; RTX mobile 5070 8Gb VRAM, PCIe 5.0 x16, 32GB DDR5, Ryzen AI9 365
+
+** apart from the hardware of contributors and/or users that open issues (sometimes sharing logs)
 
 
 ## License
