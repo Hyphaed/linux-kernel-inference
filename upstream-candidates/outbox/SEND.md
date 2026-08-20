@@ -1,8 +1,9 @@
 # Outbox , ready to send, not sent
 
-Four patches. `0021` was sent to linux-pci on 2026-08-20 and now lives in
-`../sent/`; its message-id is in `../SUBMISSION.md`. `0020` is deliberately not
-here at all; same file explains why.
+Three patches. `0021` (linux-pci) and `0017` (linux-kbuild) were both sent on
+2026-08-20 and now live in `../sent/`; their message-ids are in
+`../SUBMISSION.md`. `0020` is deliberately not here at all; same file explains
+why.
 
 **Only six of the twenty-one patches in this series are ours.** The other
 fifteen are CachyOS, XanMod, Liquorix and TKG work carried with their original
@@ -18,7 +19,7 @@ matching `Signed-off-by:`, enforced by `tests/test_patch_authorship.py`.
 | Patch | checkpatch | What it is | Send as |
 |---|---|---|---|
 | `0021-pci-sysfs-document-link-speed-width-attrs.patch` | 0 errors, 1 warning (see below) | Documentation only, no behaviour change | `PATCH` , **sent** |
-| `0017-kbuild-ubsan-extmod-opt-in.patch` | clean, "ready for submission" | Bug fix | `PATCH` |
+| `0017-kbuild-ubsan-extmod-opt-in.patch` | clean, "ready for submission" | Bug fix | `PATCH` , **sent** |
 | `0015-nvme-lower-default-apst-latency.patch` | clean | Default change, no measurement | `PATCH` , weak |
 | `0016-mm-thp-defrag-defer-madvise-default.patch` | clean | Default change, no measurement | `PATCH` , weak |
 | `0019-dma-buf-priority-hint.patch` | clean, "ready for submission" | New UAPI, contested | `RFC PATCH` |

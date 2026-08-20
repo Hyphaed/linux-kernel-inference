@@ -5,11 +5,21 @@
 | Patch | Sent | Lists | Message-ID | Thread |
 |---|---|---|---|---|
 | `0021` PCI/sysfs docs | 2026-08-20 20:42 CEST | linux-pci, linux-api, linux-kernel | `20260820184228.166566-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-pci/20260820184228.166566-1-ferran.duarri@me.com/> |
+| `0017` kbuild UBSAN extmod | 2026-08-20 21:01 CEST | linux-kbuild, linux-kernel | `20260820190200.203185-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-kbuild/20260820190200.203185-1-ferran.duarri@me.com/> |
 
-Sent with `git send-email` via `smtp.mail.me.com`, SMTP result 250, `To:` Bjorn
-Helgaas with the three lists in `Cc:`. The patch moved from `outbox/` to
-`sent/` on send. `0017` and `0019` are still in `outbox/`; see `outbox/SEND.md`
-for the order and the reason `0019` goes last.
+Both sent with `git send-email` via `smtp.mail.me.com`, SMTP result 250, To:
+the subsystem maintainers with the lists in Cc:. Each moved from `outbox/` to
+`sent/` on send. `0015`, `0016` and `0019` remain in `outbox/`; see
+`outbox/SEND.md` for the order, why the two default-change patches are the
+weakest of the six, and why `0019` goes last.
+
+`0017` is the one most likely to get a substantive reply, and the reply will
+ask for the reproducer. The answer is VMware's `vmnet`/`vmmon`: with
+CONFIG_UBSAN=y the external module inherits UBSAN flags from KBUILD_CFLAGS
+because `is-kernel-object` is 'y' for any `obj-m` object, builds clean, loads
+clean, and then fails packet forwarding at runtime. Nothing in the build output
+indicates the module was instrumented, which is what makes it cost hours to
+find rather than minutes.
 
 All submissions by this author, across every list lore archives:
 <https://lore.kernel.org/all/?q=f:ferran.duarri@me.com>
