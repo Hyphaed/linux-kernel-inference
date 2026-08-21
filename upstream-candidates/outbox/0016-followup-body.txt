@@ -1,0 +1,15 @@
+Lorenzo, our mails crossed, yours at 18:53 and my withdrawal at 19:10, so
+this is not an argument with it.
+
+I am reading both documents you linked, coding-assistants.rst and
+generated-content.rst.
+
+On the process point you are right, and I should have got there without
+being told. I used a coding assistant on the changelog and on this thread,
+and generated-content.rst covers that. There was no Assisted-by tag on the
+patch and there should have been. Future postings will carry one.
+
+The patch is withdrawn either way, for a mechanism error I describe in the
+other mail.
+
+Ferran
