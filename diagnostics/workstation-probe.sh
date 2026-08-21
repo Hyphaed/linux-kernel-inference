@@ -125,5 +125,70 @@ done
 echo "core_throttle_count (per package, if exposed):"
 grep -r . /sys/devices/system/cpu/cpu*/thermal_throttle/* 2>/dev/null
 
+sep "sysctl tunables: CONFIGURED vs LIVE"
+# A tunable that is written to /etc/sysctl.d and silently does not apply is
+# invisible in every other view: the file says one thing, /proc says another,
+# and nothing compares them. Real case, 2026-08-20: this project's
+# 95-greenboost-t2.conf asked for vm.min_free_kbytes=1048576 and the box was
+# running 524288, because GreenBoost's own installer writes
+# 99-zzz-greenboost.conf, which sorts LAST and wins every conflict by design.
+# The T2 direct-reclaim guard was running at half strength for weeks with
+# nothing reporting it.
+#
+# Every key any sysctl.d file sets is checked here , not a curated list, so a
+# tunable added later is covered without editing this script.
+{
+    declare -A _cfg_file _cfg_val
+    for f in /usr/lib/sysctl.d/*.conf /run/sysctl.d/*.conf /etc/sysctl.d/*.conf /etc/sysctl.conf; do
+        [[ -r "$f" ]] || continue
+        while IFS= read -r line; do
+            line="${line%%#*}"
+            [[ "$line" == *=* ]] || continue
+            key="${line%%=*}"; val="${line#*=}"
+            key="$(echo "$key" | tr -d '[:space:]' | tr '/' '.')"
+            val="$(echo "$val" | xargs)"
+            [[ -n "$key" && -n "$val" ]] || continue
+            # Later file wins, exactly as systemd-sysctl applies them.
+            _cfg_file["$key"]="$(basename "$f")"
+            _cfg_val["$key"]="$val"
+        done < "$f"
+    done
+
+    drift=0
+    printf '%-42s %-14s %-14s %s\n' "KEY" "CONFIGURED" "LIVE" "SOURCE (last writer)"
+    for key in $(printf '%s\n' "${!_cfg_val[@]}" | sort); do
+        path="/proc/sys/$(echo "$key" | tr '.' '/')"
+        [[ -r "$path" ]] || continue
+        live="$(tr -s '[:space:]' ' ' < "$path" | xargs)"
+        want="${_cfg_val[$key]}"
+        want_n="$(echo "$want" | xargs)"
+        if [[ "$live" != "$want_n" ]]; then
+            printf '%-42s %-14s %-14s %s   <-- DRIFT\n' "$key" "$want_n" "$live" "${_cfg_file[$key]}"
+            drift=$((drift + 1))
+        else
+            printf '%-42s %-14s %-14s %s\n' "$key" "$want_n" "$live" "${_cfg_file[$key]}"
+        fi
+    done
+    echo
+    if (( drift > 0 )); then
+        echo "$drift tunable(s) do NOT match what the files ask for."
+        echo "What that costs: each one is a guard or a policy this project"
+        echo "ships that is not actually in effect. Nothing is broken and no"
+        echo "data is at risk , the box just is not tuned the way the files say."
+        echo "To see which file loses a conflict:  systemd-analyze cat-config sysctl.d"
+        echo "To re-apply everything now:          sudo sysctl --system"
+        echo "(a value that reverts after that is being written by something at"
+        echo " runtime, not by a file , that is the case worth chasing.)"
+        echo
+        echo "Caveat on the SOURCE column: it names the file that would win"
+        echo "NOW. If a sysctl.d file was edited since the last boot, the"
+        echo "value in /proc came from the older version of it, so the winner"
+        echo "at boot may have been a different file. Compare mtimes against"
+        echo "\`uptime -s\` before concluding which file is at fault."
+    else
+        echo "No drift: every configured sysctl matches its live value."
+    fi
+} 2>/dev/null
+
 sep "Done"
 echo "Paste the full output back for analysis."

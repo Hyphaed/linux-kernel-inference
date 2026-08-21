@@ -1,0 +1,70 @@
+From: Ferran Duarri <ferran.duarri@me.com>
+Subject: Re: [RFC PATCH] dma-buf: add a generic reclaim-priority hint
+
+Following up on my own patch to put its weak parts up front rather than
+have them found in review.
+
+The only consumer is out-of-tree, and it is mine. The commit message says
+"an out-of-tree memory tiering driver we've been using", which undersells
+the conflict of interest: the driver is greenboost.ko, I wrote it, and it
+is the only thing anywhere that reads dma_buf_get_priority(). Nothing
+in-tree constrains these semantics. Adding UAPI -- two ioctls, an fdinfo
+field, and a DMA_BUF_PRIORITY_* range -- with no in-tree user is normally
+declined, and I think that is the right default.
+
+One claim in the commit message was not supported as written, and I withdraw
+that wording. "GPU drivers juggling foreground and background clients want
+it" cited no thread and no maintainer, and I should not have asserted what
+other subsystems want on their behalf.
+
+What I can point at instead is in-tree code. TTM keeps a per-BO priority
+(TTM_MAX_BO_PRIORITY, four levels) with one LRU list per level, and its
+eviction walk ascends those levels in order -- so TTM has already concluded
+that per-buffer eviction ordering is worth having, and keeps it private to
+TTM. At UAPI level the same question has been answered three times, once per
+driver: DRM_IOCTL_PANFROST_MADVISE, DRM_IOCTL_MSM_GEM_MADVISE and
+DRM_IOCTL_VC4_GEM_MADVISE each ship their own WILLNEED/DONTNEED. A driver
+that pins pages via FOLL_LONGTERM has nowhere generic to express relative
+reclaim preference, so it invents a private channel; my own out-of-tree
+module invented one more, an ioctl plus a gaming_mode sysfs flag, before this
+patch existed.
+
+I want to be exact about what that does and does not show. None of those act
+on an exported dma-buf -- they are all driver-internal. So they are evidence
+that the need recurs, and that the kernel has already accepted the concept
+including at UAPI level, but they are not an in-tree consumer of a
+dma-buf-level hint. The blocker above stands unchanged.
+
+How the hint is actually consumed, so the semantics are judgeable rather
+than hypothetical: greenboost.ko tiers a model's working set across VRAM,
+system RAM and NVMe. Its T2 eviction sweep reads dma_buf_get_priority()
+as a skip-on-threshold check that re-orders which already-eligible
+buffers are reclaimed first. It never makes a buffer eligible that was
+not already, and it never overrides the invariant that KV-cache buffers
+are not evicted. The hint changes ordering within a set, not membership
+of it.
+
+A review bot on this thread has already found one thing that needs fixing,
+and it is right. DMA_BUF_IOCTL_GET_PRIORITY is _IOR and never copies the
+struct in from userspace, so the pad field that the UAPI documents as
+"must be zero, reserved for future use" is enforced on SET and not on GET.
+That makes the promise empty: nothing stops existing userspace leaving pad
+uninitialised, and a later kernel wanting to use it as an input flag would
+have to break them. v2 will make GET _IOWR, copy the struct in, and reject
+a non-zero pad exactly as SET does. This is worth settling now rather than
+later, because changing the direction bits changes the ioctl number, and
+that is only free while there are no users.
+
+I would rather hear the shape question below answered before posting that
+v2, so the two rounds do not collide.
+
+What I am asking for is a read on the shape, not a merge. If the answer
+is "come back with an in-tree user", that is a useful answer and I will
+take it. If the shape itself is wrong -- priority belongs on the
+attachment rather than the dma_buf, the range should be smaller, a hint
+with no in-core policy is the wrong abstraction -- that is more useful
+still, because it is cheaper to hear now than after something is built on
+it.
+
+Thanks,
+Ferran

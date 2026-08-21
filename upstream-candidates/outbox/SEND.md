@@ -1,133 +1,46 @@
-# Outbox , ready to send, not sent
+# Outbox , one patch and one correction
 
-Three patches. `0021` (linux-pci) and `0017` (linux-kbuild) were both sent on
-2026-08-20 and now live in `../sent/`; their message-ids are in
-`../SUBMISSION.md`. `0020` is deliberately not here at all; same file explains
-why.
+`0015` has never been sent. `0021` has, and needs a **v2**: AI review on its
+own thread found the documentation it adds describes the attributes wrongly,
+which checking `pcie_get_speed_cap()` confirmed. Both are here. `0021`, `0017`, `0016` and `0019`
+all went out on 2026-08-20 with SMTP result 250 and now live in `../sent/`;
+their message-ids are in `../SUBMISSION.md`. `0020` is deliberately not here at
+all; same file explains why.
 
 **Only six of the twenty-one patches in this series are ours.** The other
 fifteen are CachyOS, XanMod, Liquorix and TKG work carried with their original
 authorship, and they are not ours to submit , see `../SUBMISSION.md`.
 
-Each was verified against the kernel's own gates on the 7.1 tree in `linux/`.
-
-Everything below is authored `Ferran Duarri <ferran.duarri@me.com>` with a
+Everything here is authored `Ferran Duarri <ferran.duarri@me.com>` with a
 matching `Signed-off-by:`, enforced by `tests/test_patch_authorship.py`.
 
-## Status of each
+## Status
 
 | Patch | checkpatch | What it is | Send as |
 |---|---|---|---|
-| `0021-pci-sysfs-document-link-speed-width-attrs.patch` | 0 errors, 1 warning (see below) | Documentation only, no behaviour change | `PATCH` , **sent** |
-| `0017-kbuild-ubsan-extmod-opt-in.patch` | clean, "ready for submission" | Bug fix | `PATCH` , **sent** |
-| `0015-nvme-lower-default-apst-latency.patch` | clean | Default change, no measurement | `PATCH` , weak |
-| `0016-mm-thp-defrag-defer-madvise-default.patch` | clean | Default change, no measurement | `PATCH` , weak |
-| `0019-dma-buf-priority-hint.patch` | clean, "ready for submission" | New UAPI, contested | `RFC PATCH` |
+| `0021-v2-pci-sysfs-document-link-speed-width-attrs.patch` | 0 errors, 1 warning (commit-reference line, accepted exception) | Documentation only, **corrects a wrong v1** | `PATCH v2` , ready |
+| `0017-kbuild-ubsan-extmod-opt-in.patch` | clean | Bug fix | `PATCH` , **sent** |
+| `0016-mm-thp-defrag-defer-madvise-default.patch` | 0 errors, 0 warnings, 2 strict-mode checks | Default change, no measurement offered | `PATCH` , **sent** |
+| `0019-dma-buf-priority-hint.patch` | clean | New UAPI, contested | `RFC PATCH` , **sent** |
+| `0015-nvme-lower-default-apst-latency.patch` | clean, "ready for submission" | Default change, **measured** | `PATCH` , ready |
 
-Send in that order. It is ascending order of how much argument each one will
-attract, which is also the order that builds the most credibility per reply.
+`0016`'s two checks are `--strict`-only style preferences about `(1<<FLAG)|`
+spacing, and the added line matches the formatting of the initializer block it
+sits in. Matching surrounding style is the right call; they were not defects.
 
-The one remaining `0021` warning is on its commit-reference line:
+Run checkpatch **from inside `linux/`**. Invoked from the repo root it cannot
+find the tree, silently reads a patch as though it were a source file, and
+reports a normal diff context line as a trailing-whitespace ERROR. That false
+positive cost time on 2026-08-20; the correct invocation is:
 
-    commit 56c1af4606f0 ("PCI: Add sysfs max_link_speed/width, ...")
+    cd linux && perl scripts/checkpatch.pl --strict ../upstream-candidates/outbox/00XX-*.patch
 
-That is the accepted exception. A commit reference must not be wrapped, so the
-75-column preference does not apply to it, and wrapping it to satisfy
-checkpatch produces a hard ERROR instead (verified, both ways).
+## `0015` , NVMe APST default, ready to send
 
-## Prerequisite: the one thing that is not done
-
-`git send-email` is already configured in this repo, and it is the only send
-path used here. Thunderbird was considered and dropped: the kernel's own
-`Documentation/process/email-clients.rst` opens by calling it "an Outlook clone
-that likes to mangle text", and it needs two extensions plus an external editor
-before it can send a patch safely.
-
-Current config, verified:
-
-    sendemail.smtpserver      smtp.mail.me.com
-    sendemail.smtpuser        ferran.duarri@me.com
-    sendemail.smtpserverport  587
-    sendemail.smtpencryption  tls
-    sendemail.from            Ferran Duarri <ferran.duarri@me.com>
-    sendemail.confirm         always
-    sendemail.annotate        yes
-
-**What is missing is the password, and only you can supply it.** iCloud rejects
-your Apple ID password over SMTP; it requires an app-specific password, created
-at <https://appleid.apple.com> under Sign-In and Security. `git send-email`
-prompts for it at send time. Do not put it in git config , this file is
-committed and pushed.
-
-**Send yourself a test first.** A mangled patch or a header-rewriting server is
-invisible until it hits a public list, and a list post cannot be unsent:
+Recipients confirmed against the 7.1 tree with `get_maintainer.pl`, which
+resolves this one exactly (unlike `0021`):
 
     cd ~/Dev/kernel_inference/upstream-candidates/outbox
-    git send-email --to=ferran.duarri@me.com --dry-run 0021-*.patch   # headers only
-    git send-email --to=ferran.duarri@me.com 0021-*.patch             # real, to yourself
-
-Open what arrives, save it, and confirm `git am` applies it cleanly before
-going public.
-
-### Already verified here
-
-Applied on a clean 7.1 base (no series commits present), all three in order:
-
-    git am 0021-*.patch 0017-*.patch 0019-*.patch
-    -> 3 commits, each Ferran Duarri <ferran.duarri@me.com>
-
-So a maintainer's first action succeeds. What is untested is the mail path
-itself, which is exactly what the self-test above covers.
-
-Recipients re-checked against the 7.1 `MAINTAINERS` with `get_maintainer.pl`:
-the lists below for `0017` and `0019` match it exactly. `0021` under-resolves to
-the open list only, so its recipients come from the `PCI SUBSYSTEM` entry
-directly , confirmed as Bjorn Helgaas and `linux-pci@vger.kernel.org`.
-
-`linaro-mm-sig@lists.linaro.org` (on `0019`) is a **moderated** list. A post
-from a non-subscriber sits in a moderation queue rather than bouncing, so
-silence there is not a delivery failure. The other lists are open.
-
-## 1. `0021` , PCI/sysfs documentation
-
-Lowest risk, send this one first. It documents four attributes exported since
-2018, changes no behaviour, and is the natural way to find out whether your
-mail path is clean.
-
-`get_maintainer.pl` under-resolves this one, returning only the open list,
-because the patch touches an ABI file the script does not attribute to a
-subsystem. The correct recipients come from `MAINTAINERS`' PCI SUBSYSTEM entry:
-
-    git send-email \
-      --to="Bjorn Helgaas <bhelgaas@google.com>" \
-      --cc=linux-pci@vger.kernel.org \
-      --cc=linux-api@vger.kernel.org \
-      --cc=linux-kernel@vger.kernel.org \
-      0021-pci-sysfs-document-link-speed-width-attrs.patch
-
-## 2. `0017` , kbuild UBSAN
-
-    git send-email \
-      --to="Nathan Chancellor <nathan@kernel.org>" \
-      --to="Nicolas Schier <nsc@kernel.org>" \
-      --cc=linux-kbuild@vger.kernel.org \
-      --cc=linux-kernel@vger.kernel.org \
-      0017-kbuild-ubsan-extmod-opt-in.patch
-
-Expect to be asked for the reproducer. The answer is VMware `vmnet`/`vmmon`:
-builds clean, loads clean, then fails packet forwarding at runtime because it
-inherited UBSAN flags it never asked for.
-
-## 3. `0015` , NVMe APST default, and `0016` , THP defrag default
-
-Both were regenerated on 2026-08-20 and were **not submittable before that**.
-They had been hand-written rather than produced by `git format-patch`: fake
-blob hashes (`index 1111111..2222222`), a placeholder
-`Date: Mon, 01 Jan 2024 00:00:00`, no `From <sha>` header, and a private
-`Forward-Port-Notes:` trailer sitting above the `---` where `git am` would have
-carried it into the commit message. They now come from real commits on a clean
-7.1 base and are checkpatch-clean.
-
     git send-email \
       --to="Keith Busch <kbusch@kernel.org>" \
       --to="Jens Axboe <axboe@kernel.dk>" \
@@ -137,7 +50,165 @@ carried it into the commit message. They now come from real commits on a clean
       --cc=linux-kernel@vger.kernel.org \
       0015-nvme-lower-default-apst-latency.patch
 
+### This one is no longer the weak sell it was
+
+Earlier revisions of this file said `0015` and `0016` were the weakest of the
+six because neither offered a measurement. That is still true of `0016`. It is
+no longer true of `0015`.
+
+The device (Samsung SSD 990 EVO Plus 4TB, fw 2B2QKXG7) advertises two
+non-operational states, `ps 3` exiting in 4.6 ms and `ps 4` in 43 ms. The stock
+100 ms bound admits `ps 4`; the patch's 25 ms bound stops at `ps 3`. Confirmed
+directly from the controller's own APST table rather than inferred: at 25000 it
+targets `ps [0, 3]`, at 100000 `ps [0, 3, 4]`.
+
+Measured with `diagnostics/nvme-apst-cold-read.py`, 60 trials per setting,
+the two settings interleaved trial by trial:
+
+                       p50      p90      p99      max
+    100000 (ps 4)     3.3ms   33.0ms   33.5ms   33.5ms
+    25000  (ps 3)     3.2ms    3.6ms    3.7ms    4.2ms
+    warm, no idle     0.2ms    0.3ms    1.7ms    3.6ms
+
+Two things make this trustworthy, and one caveat is stated in the commit
+message rather than hidden:
+
+- **Both states landed at 78% of their advertised exit latency** (3.57 of
+  4.6 ms; 33.46 of 43 ms). Two independent magnitudes with the same systematic
+  relationship to the spec figure is the cross-check that the sampler measures
+  wake latency rather than something else.
+- **The 25000 arm never exceeded 4.228 ms across 60 trials**, and shows no warm
+  mode at all. The patch's bound is observed, not merely advertised.
+- **Caveat: roughly five trials in six at 100000 did not finish descending to
+  `ps 4`** inside the 4.81 s idle window and were sampled at `ps 3` depth,
+  which is why that row's p50 sits at the other row's value. The `ps 4` figure
+  rests on the remaining sixth, where it was tightly reproducible
+  (32.9-33.5 ms). This dilution can only understate the cost of the current
+  default, never overstate it.
+
+The idle window has since been widened (`derived * 2.0 + 2.0` rather than
+`* 1.5 + 1.0`) because a disturbance mid-window costs the whole descent again,
+not a fraction of it. A re-run at the wider setting would put most trials in
+the `ps 4` mode and raise that figure's sample count; it is not needed for the
+claim, which is already conservative.
+
+`25 ms` is a bound on latency an interactive reader notices, not a value fitted
+to this drive , any value between 4.6 and 43 ms behaves identically here. The
+commit message says so explicitly, and says that on a device whose deepest
+state exits under 25 ms the patch is a no-op, which is correct for a bound.
+That answers the objection this file used to predict ("on an SSD whose deepest
+state exits in 5 ms the patch changes nothing") before it is raised.
+
+## `0021` v2 , the sent version was wrong
+
+AI review on the v1 thread raised three objections to the documentation text.
+All three were checked against `drivers/pci/` and all three hold, and a fourth
+and fifth turned up while checking:
+
+1. v1 called `max_link_speed` "the ceiling the link may negotiate, which is the
+   lower of what the two ends of the link support", then contradicted itself one
+   sentence later. `max_link_speed_show()` calls `pcie_get_speed_cap()`, which
+   is now just `PCIE_LNKCAP2_SLS2SPEED(dev->supported_speeds)` , the capability
+   of the device being read, never consulting the other end at all.
+2. v1 attributed the value to the Max Link Speed field of Link Capabilities.
+   `pcie_get_supported_speeds()` reads the Supported Link Speeds Vector in Link
+   Capabilities **2**, masks it against Max Link Speed, and falls back to
+   synthesizing from Max Link Speed only for devices predating PCIe r3.0.
+3. v1 told callers wanting the ceiling to use `max_link_speed`. That
+   overestimates whenever the upstream port is the slower end , exactly the
+   error a user-space tool would then report as available bandwidth.
+4. Found while checking, not raised in review: the value is read once at
+   enumeration and cached in `pci_dev->supported_speeds` (`probe.c`). v1 never
+   said so, while its `current_link_speed` entry advertises that nothing is
+   cached , inviting the reader to assume the same of `max_link_speed`.
+5. Also found here: v1 carried a private `Forward-Port-Notes:` trailer inside
+   the commit message. That is the same defect commit `9d2a71a` cleaned out of
+   `0015` and `0016`; nobody re-checked `0021`, and it shipped.
+
+`max_link_width`'s register attribution was correct and is unchanged in
+substance. Send v2 threaded to v1:
+
+    cd ~/Dev/kernel_inference/upstream-candidates/outbox
     git send-email \
+      --in-reply-to="<20260820184228.166566-1-ferran.duarri@me.com>" \
+      --to="Bjorn Helgaas <bhelgaas@google.com>" \
+      --cc=linux-pci@vger.kernel.org \
+      --cc=linux-api@vger.kernel.org \
+      --cc=linux-kernel@vger.kernel.org \
+      0021-v2-pci-sysfs-document-link-speed-width-attrs.patch
+
+The lesson worth keeping: a documentation patch is a claim about behaviour, and
+it needs the same verification against the implementation that a code change
+gets. v1's text was written from how the attributes *ought* to work.
+
+## Pending: the `0019` follow-up reply
+
+`../replies/0019-followup.txt`, ready to send, dry-run verified:
+
+    cd ~/Dev/kernel_inference/upstream-candidates/replies
+    git send-email \
+      --in-reply-to="<20260820190838.221435-1-ferran.duarri@me.com>" \
+      --to="Sumit Semwal <sumit.semwal@linaro.org>" \
+      --to="Christian König <christian.koenig@amd.com>" \
+      --cc=linux-media@vger.kernel.org \
+      --cc=dri-devel@lists.freedesktop.org \
+      --cc=linaro-mm-sig@lists.linaro.org \
+      --cc=linux-kernel@vger.kernel.org \
+      0019-followup.txt
+
+`0019` went out as a bare single patch with no cover letter, so the four points
+this file said to lead with never travelled with it. Its commit message does
+disclose that the consumer is out-of-tree, so nothing was concealed, but it
+does not name `greenboost.ko`, does not say it is the *only* consumer, does not
+state the ask, and asserts that "GPU drivers juggling foreground and background
+clients want it" with nothing cited. The reply fixes all four, including
+withdrawing that claim , the same move that made `0016` honest.
+
+## Queued 2026-08-21 , three sends, none made. Commands below are DRY-RUN VERIFIED.
+
+Recipients are from `MAINTAINERS` / `get_maintainer.pl`, not memory:
+Bjorn Helgaas <bhelgaas@google.com> and linux-pci for PCI;
+Ilpo Järvinen <ilpo.jarvinen@linux.intel.com> is the reviewer who replied.
+(`Documentation/ABI/testing/sysfs-bus-pci` is NOT listed under PCI SUBSYSTEM's
+`F:` lines, so `get_maintainer.pl` returns only the open list for it , the
+addresses above are the right ones anyway and the thread already reaches them.)
+
+Run `./tools/patch-audit` first. Currently green.
+
+Every command below has been run with `--dry-run` and reported `Dry-OK`.
+To send for real, drop `--dry-run`.
+
+**1. Reply to the `0021` review** , answers the Assisted-by question, the
+same-evening v1/v2 churn, and Ilpo's two technical points:
+
+    cd ~/Dev/kernel_inference/upstream-candidates/replies
+    git send-email \
+      --in-reply-to="<20260820184228.166566-1-ferran.duarri@me.com>" \
+      --to="Ilpo Järvinen <ilpo.jarvinen@linux.intel.com>" \
+      --to="Bjorn Helgaas <bhelgaas@google.com>" \
+      --cc=linux-pci@vger.kernel.org \
+      --cc=linux-api@vger.kernel.org \
+      --cc=linux-kernel@vger.kernel.org \
+      0021-review-reply.txt
+
+**2. `0021` v3** , same thread, straight after the reply:
+
+    cd ~/Dev/kernel_inference/upstream-candidates/outbox
+    git send-email \
+      --in-reply-to="<20260820184228.166566-1-ferran.duarri@me.com>" \
+      --to="Bjorn Helgaas <bhelgaas@google.com>" \
+      --to="Ilpo Järvinen <ilpo.jarvinen@linux.intel.com>" \
+      --cc=linux-pci@vger.kernel.org \
+      --cc=linux-api@vger.kernel.org \
+      --cc=linux-kernel@vger.kernel.org \
+      0021-v3-pci-sysfs-document-link-speed-width-attrs.patch
+
+**3. Withdraw `0016`** , different subsystem, different thread. Same recipient
+set the original went to, so everyone who saw the patch sees the withdrawal:
+
+    cd ~/Dev/kernel_inference/upstream-candidates/replies
+    git send-email \
+      --in-reply-to="<20260820190825.221308-1-ferran.duarri@me.com>" \
       --to="Andrew Morton <akpm@linux-foundation.org>" \
       --to="David Hildenbrand <david@kernel.org>" \
       --to="Lorenzo Stoakes <ljs@kernel.org>" \
@@ -147,113 +218,117 @@ carried it into the commit message. They now come from real commits on a clean
       --cc="Barry Song <baohua@kernel.org>" \
       --cc=linux-mm@kvack.org \
       --cc=linux-kernel@vger.kernel.org \
-      0016-mm-thp-defrag-defer-madvise-default.patch
+      0016-withdrawal.txt
 
-**Expect these two to be the hardest sell in the series, and know why before
-you send them.** Neither fixes a bug. Each changes a compiled-in default that
-is already runtime-tunable by the very mechanism its own commit message points
-at , a module parameter for `0015`, a sysfs knob for `0016`. The standing
-answer to that shape of patch is "your machine can already set this, so set
-it", and it is a fair answer.
+### What happens when you run one
 
-### Measured on this box, 2026-08-20
+`sendemail.confirm = always` and `sendemail.annotate = yes` are both set, so
+each message stops twice: an editor opens on the message (save and quit to keep
+it, or edit in place), then a `Send this email? ([y]es|[n]o|[q]uit|[a]ll)`
+prompt. `q` at that prompt sends nothing.
 
-Read before you claim a benefit, because one of these does not say what we
-expected.
+The SMTP password is an **app-specific password** from
+<https://appleid.apple.com> under Sign-In and Security. iCloud rejects the
+Apple ID password itself. It is prompted for at send time and is not in git
+config, which is deliberate , this file is committed.
 
-`0016`, THP. The premise checks out and the benefit does not, yet:
+### Immediately after each send , non-optional
 
-    enabled: [always] madvise never          <- the config the argument needs
-    defrag:  always defer [defer+madvise]    <- patch active
-    compact_stall        0
-    thp_fault_alloc      60682
-    thp_fault_fallback   0
+`git send-email` prints `Message-ID: <...>` for every message. Put it in
+`../SUBMISSION.md` before you run the next command. **A send is not done until
+its message-id is recorded there.** That missing step is the entire reason the
+`0021` history could not be reconstructed and why nobody noticed v2 had already
+gone out.
 
-Zero stalls in 4h21m looks like a win and is not one. Direct compaction is
-only entered when a THP allocation FAILS, and `thp_fault_fallback` is 0 , not
-one of 60682 huge-page faults had to fall back. With 46 GB of 64 GB available
-and swap untouched, unpatched `madvise` mode would have recorded 0 stalls too.
-**This box has never reached the condition the patch protects against**, so it
-cannot testify either way.
+## Pre-send gate , run 2026-08-21 02:28 CEST, all three items
 
-So do not send `0016` as a performance fix. Send it as the correctness argument
-it actually is, which needs no benchmark: `CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS`
-and `_MADVISE` choose *whether* THP applies, the defrag flag chooses *how hard*
-the allocator works, and the initializer pins the second as though the first
-had decided it. That is reviewable on the code alone. State plainly that no
-stall measurement is offered and why , an untriggered path on the author's
-hardware is a better answer than a number that measured nothing.
+Verified, nothing sent. Every send is outward-facing and irreversible and none
+of the three went out; they wait on an explicit per-item go-ahead. (The mail
+path could not have sent unattended in any case , `git send-email` prompts for
+the app-specific password, and `sendemail.confirm always` stops on every send.)
 
-`0015`, NVMe. Device is a Samsung SSD 990 EVO Plus 4TB, fw 2B2QKXG7, and the
-running kernel already carries the patch (`default_ps_max_latency_us` reads
-25000). The decisive figure is the deepest non-operational state's exit
-latency, which needs root:
+| Item | checkpatch (from inside `linux/`) | authorship test | threading |
+|---|---|---|---|
+| `0015` nvme APST | **clean** , 0 errors, 0 warnings, 0 checks, 8 lines | 62 passed | new thread, correct , no parent |
+| `0021` v2 PCI/sysfs | 0 errors, **1 warning** (see below) | 62 passed | `--in-reply-to` matches v1's recorded message-id exactly |
+| `0019` follow-up | n/a , prose reply, not a patch | n/a | `--in-reply-to` matches `0019`'s recorded message-id exactly |
 
-    sudo nvme id-ctrl /dev/nvme0 -H | grep -A2 -iE '^ps  '
+**Threading checked against `../SUBMISSION.md`, not assumed.** Both ids match
+character for character:
 
-If that state exits in well under 25ms the patch changes nothing on this
-device and the honest thing is to say so. If it approaches 100ms, that number
-IS the argument and belongs in the commit message.
+    0021 v1 : 20260820184228.166566-1-ferran.duarri@me.com
+    0019    : 20260820190838.221435-1-ferran.duarri@me.com
 
-What would additionally change the outcome, for both:
+Note the `0019` reply carries no `In-Reply-To:` header inside
+`0019-followup.txt` itself , the threading comes from the `--in-reply-to` flag
+on the send command above. That is correct, but it means **the flag is the only
+thing keeping the reply in the thread**: sending that file without it starts a
+new thread, which is worse than not replying.
 
-- `0015` needs a cold-read latency distribution on a device whose deepest
-  non-operational state actually approaches the 100ms bound, at both settings.
-  Without it the 25ms figure is a preference, not a finding. Worth knowing that
-  the number is also device-dependent , on an SSD whose deepest state exits in
-  5ms the patch changes nothing at all, which is an argument the list will
-  make.
-- `0016` needs fault-latency percentiles under memory pressure with
-  `transparent_hugepage=always`, at `madvise` versus `defer+madvise`. The
-  argument in the commit message (that the Kconfig choice is about *whether*,
-  not *how hard*, and the two got conflated) is the genuinely interesting part
-  and stands on its own reasoning , but a stall measurement is what makes it
-  land.
+**The one `0021` v2 warning, and why it is being left alone:**
 
-Send them anyway if you want the reviewer's read on the reasoning; just lead
-with the missing measurement rather than waiting to be asked, exactly as
-`0019` leads with its missing in-tree user. An author who marks their own
-evidence gap gets engagement; one who is caught in it gets ignored.
+    WARNING: Prefer a maximum 75 chars per line (possible unwrapped commit description?)
+    #10: commit 56c1af4606f0 ("PCI: Add sysfs max_link_speed/width, current_link_speed/width, etc"),
 
-## 4. `0019` , dma-buf priority hint (RFC)
+That is the standard `commit <sha12> ("subject")` citation form that
+`Documentation/process/submitting-patches.rst` asks for. The subject being
+cited is itself 62 characters, so no wrapping keeps the line under 75 without
+mangling a quoted title. Kernel history is full of merged commits that trip
+this exact warning on citation lines. Rewriting it would mean editing the
+commit message of a v2 whose v1 is already public , more risk than the warning
+is worth. Left as-is deliberately; if a maintainer objects, wrap it in v3.
 
-Send **last**, and only once the two above have landed or at least been
-received without mail problems. This is new UAPI and it will be argued about.
+`0015`'s measurement IS in its commit message (Samsung 990 EVO Plus, ps 3 vs
+ps 4, 60 interleaved trials per setting, p50/p90/p99/max table), together with
+the caveat that five trials in six never finished descending to ps 4 and the
+73mW idle-power cost. That was the standing condition on sending it , "only if
+the measurement is correct and not contaminated" , and it is met.
 
-    git send-email \
-      --subject-prefix="RFC PATCH" \
-      --to="Sumit Semwal <sumit.semwal@linaro.org>" \
-      --to="Christian König <christian.koenig@amd.com>" \
-      --cc=linux-media@vger.kernel.org \
-      --cc=dri-devel@lists.freedesktop.org \
-      --cc=linaro-mm-sig@lists.linaro.org \
-      --cc=linux-kernel@vger.kernel.org \
-      0019-dma-buf-priority-hint.patch
+## What each sent patch will be asked
 
-**Lead with the blocker in your reply, do not wait to be caught.** The only
-consumer is out-of-tree. Adding UAPI (two ioctls, an fdinfo field, a
-`DMA_BUF_PRIORITY_*` range) with no in-tree user is normally declined, and
-correctly so: UAPI is permanent and nothing in-tree constrains the semantics.
+- **`0017`** is the likeliest to get a substantive reply, and the reply will ask
+  for the reproducer. The answer is VMware `vmnet`/`vmmon`: builds clean, loads
+  clean, then fails packet forwarding at runtime because it inherited UBSAN
+  flags it never asked for. `../SUBMISSION.md` carries the full version.
+- **`0016`** offers no stall measurement and says so in its own commit message.
+  The box has never reached the condition the patch guards against:
+  `thp_fault_fallback` was 0 across 60682 huge-page faults, so direct
+  compaction was never entered and `compact_stall 0` testifies to nothing. It
+  rests on the correctness argument instead ,
+  `CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS`/`_MADVISE` decide *whether* THP applies,
+  the defrag flag decides *how hard* the allocator works, and the initializer
+  pins the second as though the first had decided it. Judgeable on the code
+  alone. What would change it: fault-latency percentiles under real memory
+  pressure at `madvise` versus `defer+madvise`.
+- **`0019`** will be told it has no in-tree user. That is correct and the
+  follow-up above says it first.
+- **`0021`** documents four attributes exported since 2018 and changes no
+  behaviour. v1 described them incorrectly; see the v2 section above. Do not
+  wait for Bjorn to find it.
 
-`../SUBMISSION.md` has the full cover-letter skeleton. The short version, in
-the order the list will want it:
+## Mail path
 
-1. The problem: an exporter that knows some of its pinned buffers are hot has
-   no standard way to say so, so every out-of-tree tiering driver invents a
-   private ioctl. GreenBoost's `GB_IOCTL_SET_HEAT` is exactly that.
-2. What this adds: a hint, not a policy. An advisory 0-255 value, reported via
-   fdinfo and `GET_PRIORITY`, with no reclaim implemented in dma-buf core.
-   Deliberately the smallest possible surface.
-3. Who uses it, named plainly as out-of-tree, with the reader described
-   concretely: `greenboost.ko` consults it in its T2 eviction sweep, as a
-   skip-on-threshold check that never overrides the hard KV-cache invariant.
-4. What you are asking for: whether the shape is right, not whether it can be
-   merged today.
+`git send-email` via `smtp.mail.me.com`, already configured in this repo and
+the only send path used here. `sendemail.confirm always` and
+`sendemail.annotate yes` are both set, so every send stops for confirmation.
 
-Realistic outcomes are that someone with an in-tree use case redesigns it, or
-it is declined pending one. Both are worth knowing.
+**The password is not in git config and must not be**, this file is committed.
+iCloud rejects the Apple ID password over SMTP; it needs an app-specific
+password from <https://appleid.apple.com> under Sign-In and Security, which
+`git send-email` prompts for at send time.
+
+`linaro-mm-sig@lists.linaro.org` (on `0019`) is **moderated**. A post from a
+non-subscriber waits in a queue rather than bouncing, so silence there is not a
+delivery failure. The other lists are open.
+
+**Archival has not been independently confirmed.** `lore.kernel.org` sits
+behind an Anubis proof-of-work wall that refuses `curl` and an automated
+browser alike, so the thread URLs in `../SUBMISSION.md` are constructed from
+the message-ids rather than fetched. Every send Cc'd `ferran.duarri@me.com`, so
+the copies in that mailbox are the delivery evidence , check there for bounces,
+and open the lore URLs in a normal browser to confirm the lists accepted them.
 
 ## After sending
 
-Record the lore.kernel.org message-id for each in `../SUBMISSION.md` so the
-thread can be found later, and move the patch out of this outbox.
+Record the message-id in `../SUBMISSION.md`, mark the row in its series table,
+and `git mv` the patch into `../sent/`.

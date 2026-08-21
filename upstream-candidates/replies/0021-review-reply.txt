@@ -1,0 +1,62 @@
+From: Ferran Duarri <ferran.duarri@me.com>
+Subject: Re: [PATCH v2] PCI/sysfs: document the link speed and width attributes
+
+On the two process points first, since both are mine.
+
+Yes, I forgot the Assisted-by: tag. This patch was written with an AI
+coding assistant and should have said so from v1;
+Documentation/process/coding-assistants.rst is explicit and checkpatch
+even validates the format. v3 carries:
+
+  Assisted-by: Claude:claude-opus-5 checkpatch patch-audit
+
+The sign-off stays mine and unchanged -- the DCO is mine to certify,
+not a model's. I have added a check to my own pre-send gate so an
+untagged patch cannot leave here again; that gate is the "patch-audit"
+named above.
+
+On the v2 traffic: context rather than an excuse. These patches were
+written over the past few weeks and sat in a local outbox while I decided
+whether they were worth anyone's time. Today I went through that backlog
+and posted them, and I reviewed 0021 properly only after v1 was already
+out -- which is how v1 and v2 came to land about eighty minutes apart on
+the same evening. That is my sequencing error, not yours to absorb: the
+review that produced v2 should have happened before v1 was sent, not
+after.
+
+If two copies of v2 itself reached you, that is a separate slip and also
+mine -- both would have been byte-identical, not two different patches.
+I cannot tell from my side which of the two you saw, because I never
+recorded v2's message-id, which is its own bad habit and now fixed. My
+outbox also had no duplicate-subject guard; it does now.
+
+Either way v3 supersedes everything sent before it, and there will not be
+a v4 an hour later.
+
+On the review itself, both points taken and both are in v3:
+
+> IMO it's unnecessary detail to say it's synthetized. For <= PCIe r3.0,
+> kernel does indeed synthetize something, but that "supported speeds"
+> which is a set of values. pcie_get_speed_cap() used in
+> max_link_speed_show() only returns the max value out of that set
+> which, for sane devices, should be same as Max Link Speed.
+
+Agreed, and the sentence was imprecise as well as unnecessary -- I wrote
+it as though a single value were synthesized. Dropped from both the
+commit message and the ABI text. The entry now stops at "derived from
+the Supported Link Speeds Vector in Link Capabilities 2, capped by Max
+Link Speed in Link Capabilities", which is what a reader of this file
+actually needs.
+
+> The speed may also be capped by Target Link Speed in Link Control 2
+> that is under control of PCIe BW Controller (bwctrl).
+
+Added, and it belongs here more than the sentence I dropped -- the whole
+point of the current_link_speed entry is that a low reading is usually
+not a fault, and "bwctrl is holding it there deliberately" is a second
+way that happens which I had missed entirely. v3 says a link held at
+Target Link Speed is operating as configured, not degraded.
+
+Thanks for both.
+
+Ferran

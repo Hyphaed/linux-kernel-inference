@@ -2,29 +2,66 @@ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Ferran Duarri <ferran.duarri@me.com>
 Date: Thu, 20 Aug 2026 20:49:11 +0200
 Subject: [PATCH] nvme: lower default APST max latency to 25ms
+default_ps_max_latency_us is 100000, so APST may enter any
+non-operational power state whose advertised exit latency is at or below
+100ms. The gate is exit latency alone; entry latency only feeds the
+transition timer.
 
-default_ps_max_latency_us defaults to 100000, which lets APST enter
-non-operational power states whose advertised exit latency is up to
-100ms. On a device whose deepest state sits near that bound, the first
-random read after an idle period pays that wake latency in full.
+That one bound decides how deep a device may sleep. On a device that
+advertises a non-operational state an order of magnitude slower than the
+next one up, the 100ms default silently selects the slow one, and the
+first read after an idle period pays that wake in full. It shows up as a
+stall rather than as reduced throughput, being a one-shot cost on a cold
+access rather than a steady-state penalty. The workload that prompted
+this is staging large model weights from NVMe, where a cold mmap fault
+on a multi-gigabyte checkpoint is exactly that access.
 
-For interactive and latency-sensitive reads this is visible as a stall
-rather than as reduced throughput, because it is a one-shot cost on a
-cold access rather than a steady-state penalty. The workload that
-prompted this is staging large model weights from NVMe, where a cold
-mmap fault on a multi-gigabyte checkpoint is exactly the access this
-punishes.
+Measured on a Samsung SSD 990 EVO Plus 4TB (fw 2B2QKXG7), which
+advertises two non-operational states:
 
-25ms still permits APST into the shallower non-operational states, so
-idle power saving is retained, while bounding worst-case wake latency
-to roughly a quarter of the current default.
+  ps 3   exit  4.6ms   0.0800W
+  ps 4   exit 43.0ms   0.0070W
 
-This changes only the compiled-in default. The value remains writable
-at runtime via the module parameter, settable on the kernel command
-line as nvme_core.default_ps_max_latency_us=, and overridable per
-device through PM QOS, so any system preferring deeper idle states can
+At 100000 the APST table targets ps 4; at 25000 it targets ps 3. Cold
+4KiB O_DIRECT reads after an idle period, 60 trials per setting, the two
+settings interleaved trial by trial:
+
+                     p50      p90      p99      max
+  100000 (ps 4)     3.3ms   33.0ms   33.5ms   33.5ms
+  25000  (ps 3)     3.2ms    3.6ms    3.7ms    4.2ms
+  warm, no idle     0.2ms    0.3ms    1.7ms    3.6ms
+
+Observed worst case falls from 33.5ms to 4.2ms. Both states measured 78%
+of their advertised exit latency, which is the cross-check that the two
+figures measure the same thing at two magnitudes.
+
+The p50 at 100000 needs reading carefully: roughly five trials in six did
+not finish descending to ps 4 inside the idle window and were sampled at
+ps 3 depth, which pulls that row's median down to the 25000 row's value.
+The ps 4 column therefore rests on the remaining sixth, where it was
+tightly reproducible, 32.9ms to 33.5ms. That effect can only understate
+the cost of the current default, never overstate it.
+
+25ms is not derived from this device. It is a bound on latency an
+interactive reader notices; any value between 4.6ms and 43ms behaves
+identically here. The device is an existence proof that the 100ms
+default admits a state far slower than the next available one, not the
+source of the constant. On a device whose deepest non-operational state
+exits well under 25ms this changes nothing, which is correct for a bound.
+
+The cost is idle power. Excluding ps 4 leaves ps 3 as the deepest state
+the device reaches autonomously, 0.0800W rather than 0.0070W, so roughly
+73mW more on an idle drive.
+
+This changes only the compiled-in default. default_ps_max_latency_us is
+consumed once per controller in nvme_add_ctrl(), so it applies from the
+kernel command line as nvme_core.default_ps_max_latency_us=. A running
+controller instead follows its per-device PM QOS value
+(pm_qos_latency_tolerance_us), which is how the two settings above were
+compared without a reboot. Any system preferring deeper idle states can
 restore the old behaviour without a rebuild.
 
+Assisted-by: Claude:claude-opus-5 checkpatch patch-audit
 Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
 ---
  drivers/nvme/host/core.c | 2 +-

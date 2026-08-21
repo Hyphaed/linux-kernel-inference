@@ -114,6 +114,76 @@ def test_signoff_is_inside_the_commit_message(patch: Path):
         f"dropped by git am")
 
 
+ASSISTED = "Assisted-by: Claude:claude-opus-5"
+
+#: Patches still in the outbox , the only ones an edit can still reach.
+#: Anything under sent/ is a historical record of what actually went to a
+#: mailing list; rewriting it would make our archive disagree with lore's,
+#: which is worse than the missing tag. Those get the tag in their NEXT
+#: revision (that is what 0021 v3 is), never retroactively.
+def _sendable() -> list[Path]:
+    outbox = REPO / "upstream-candidates" / "outbox"
+    return sorted(p for p in outbox.glob("*.patch") if p.name not in _NOT_OURS)
+
+
+def test_there_are_sendable_patches_to_check():
+    assert _sendable(), "no patches in the outbox , this gate would pass vacuously"
+
+
+@pytest.mark.parametrize("patch", _sendable(), ids=lambda p: p.name)
+def test_ai_assisted_patches_carry_the_assisted_by_tag(patch: Path):
+    """Every patch here was written with an AI coding assistant, and
+    Documentation/process/coding-assistants.rst requires that to be declared.
+
+    This test exists because it was not declared. `0021` went to linux-pci as
+    v1 and v2 with no tag, and the maintainer asked "Did you forget the
+    Assisted-by: tag?" before anyone here noticed. The rule was already in the
+    tree we build against , checkpatch.pl even validates the format , and
+    nothing on our side checked it.
+
+    Format is AGENT_NAME:MODEL_VERSION, NOT an email address; checkpatch warns
+    BAD_SIGN_OFF otherwise. Basic tools (git, gcc, make) are not listed.
+    """
+    text = patch.read_text(errors="ignore")
+    assert ASSISTED in text, (
+        f"{patch.name} has no Assisted-by tag. Every patch in this tree was "
+        f"AI-assisted; declaring it is required, not optional.")
+
+
+@pytest.mark.parametrize("patch", _sendable(), ids=lambda p: p.name)
+def test_assisted_by_sits_above_the_signoff_and_inside_the_message(patch: Path):
+    """Trailer order, and inside the commit message.
+
+    `git am` silently drops anything below the `---` separator, so a tag there
+    is a tag that never reaches the tree , the same trap the sign-off test
+    already guards.
+    """
+    text = patch.read_text(errors="ignore")
+    sep = re.search(r"^---$", text, flags=re.M)
+    assert sep, f"{patch.name} has no '---' separator, not a format-patch mbox"
+    body = text[:sep.start()]
+    assert ASSISTED in body, (
+        f"{patch.name}: Assisted-by is below the '---' separator, where git am "
+        f"drops it")
+    assert body.index(ASSISTED) < body.index(SOB), (
+        f"{patch.name}: Assisted-by must come before Signed-off-by , the "
+        f"human's DCO attestation is the last word on the patch")
+
+
+def test_no_ai_signed_off_by():
+    """AI agents MUST NOT add Signed-off-by (coding-assistants.rst).
+
+    Only a human can certify the DCO. A sign-off naming a model would be a
+    false legal attestation, not a style problem.
+    """
+    for p in _ours():                      # every patch, sent or not
+        for line in p.read_text(errors="ignore").splitlines():
+            if line.startswith("Signed-off-by:"):
+                assert "claude" not in line.lower() and "gpt" not in line.lower(), (
+                    f"{p.name}: an AI must never carry a Signed-off-by , "
+                    f"only humans can certify the DCO")
+
+
 def test_no_placeholder_authorship_anywhere_in_ours():
     """`noreply@local` credits nobody for work we did."""
     for p in _ours():

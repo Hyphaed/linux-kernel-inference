@@ -6,12 +6,155 @@
 |---|---|---|---|---|
 | `0021` PCI/sysfs docs | 2026-08-20 20:42 CEST | linux-pci, linux-api, linux-kernel | `20260820184228.166566-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-pci/20260820184228.166566-1-ferran.duarri@me.com/> |
 | `0017` kbuild UBSAN extmod | 2026-08-20 21:01 CEST | linux-kbuild, linux-kernel | `20260820190200.203185-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-kbuild/20260820190200.203185-1-ferran.duarri@me.com/> |
+| `0016` THP defrag default | 2026-08-20 21:08 CEST | linux-mm, linux-kernel | `20260820190825.221308-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-mm/20260820190825.221308-1-ferran.duarri@me.com/> |
+| `0019` dma-buf priority hint (RFC) | 2026-08-20 21:08 CEST | dri-devel, linux-media, linaro-mm-sig, linux-kernel | `20260820190838.221435-1-ferran.duarri@me.com` | <https://lore.kernel.org/dri-devel/20260820190838.221435-1-ferran.duarri@me.com/> |
 
-Both sent with `git send-email` via `smtp.mail.me.com`, SMTP result 250, To:
-the subsystem maintainers with the lists in Cc:. Each moved from `outbox/` to
-`sent/` on send. `0015`, `0016` and `0019` remain in `outbox/`; see
-`outbox/SEND.md` for the order, why the two default-change patches are the
-weakest of the six, and why `0019` goes last.
+All sent with `git send-email` via `smtp.mail.me.com`, SMTP result 250, To: the
+subsystem maintainers with the lists in Cc:. Each moved from `outbox/` to
+`sent/` on send. `0015` is the last of ours still unsent; `0020` is
+deliberately held, and this file explains why further down.
+
+`0019` went out as `RFC PATCH` rather than `PATCH`, deliberately: it adds UAPI
+whose only consumer is out-of-tree, and the reply to write is the one that says
+so first. `linaro-mm-sig` is moderated, so a post from a non-subscriber waits
+in a queue rather than bouncing , silence on that list is not a delivery
+failure.
+
+**Archival is recorded here but not independently confirmed.**
+`lore.kernel.org` sits behind an Anubis proof-of-work wall that refuses both
+`curl` and an automated browser, so the thread URLs above are constructed from
+the message-ids rather than fetched. The message-ids themselves come from
+`git send-email`'s own output, and every send Cc'd `ferran.duarri@me.com`, so
+the copy in that mailbox is the delivery evidence. Open the URLs in a normal
+browser to confirm the lists accepted them.
+
+**Two threads already have review on them, and both found real problems.**
+## `0016` , WITHDRAWN 2026-08-21. The commit message had the mechanism backwards.
+
+Andrew pointed an AI review at it (sashiko.dev). Its High-severity finding was
+correct, and verified here against `mm/huge_memory.c` rather than taken on
+trust.
+
+The patch claimed that under `transparent_hugepage=always` a faulting thread
+"can stall in compaction". It cannot. `vma_thp_gfp_mask()` under the current
+`madvise` defrag default returns `GFP_TRANSHUGE_LIGHT` with **no reclaim flag
+at all** for a non-madvised VMA , it fails fast. The only faults that enter
+direct reclaim are `MADV_HUGEPAGE` regions, and `defer+madvise` keeps
+`__GFP_DIRECT_RECLAIM` for exactly those. **The patch removes no stall.**
+
+What it does change is the other branch: non-madvised faults *gain*
+`__GFP_KSWAPD_RECLAIM`, which they did not have , strictly more background
+work, waking kswapd/kcompactd on failed THP allocations across every anonymous
+fault under THP=always. On a fragmented machine that is a plausible regression.
+
+`Documentation/admin-guide/mm/transhuge.rst:189` says it plainly: madvise
+"will enter direct reclaim like ``always`` but only for regions that are have
+used madvise(MADV_HUGEPAGE)". Reading that first would have prevented the
+patch.
+
+It also had no measurement , `thp_fault_fallback` was 0 across 60682
+huge-page faults, so the condition was never reached. It rested entirely on a
+correctness argument, and the correctness argument was wrong.
+
+**Lesson, worth more than the patch:** the commit message asserted a code path
+without reading the function that implements it. The measurement gate this repo
+already had ("only patch what you can prove helps") did not catch it, because
+the claim was about mechanism, not effect. `outbox/0016-*.patch` is not coming
+back without fault-latency percentiles at `madvise` vs `defer+madvise` on a
+machine that actually reaches fallback.
+
+Withdrawal drafted at `replies/0016-withdrawal.txt`.
+
+## `0021` , the full version history, written down because it got confusing
+
+**v1** , sent 2026-08-20 20:42 CEST, message-id
+`20260820184228.166566-1-ferran.duarri@me.com`.
+
+**Why there is a v2 at all.** v1 described `max_link_speed` **backwards**. It
+called it "the ceiling the link may negotiate, which is the lower of what the
+two ends of the link support", then contradicted itself one sentence later.
+`max_link_speed_show()` calls `pcie_get_speed_cap()`, which returns the
+capability of **the device being read** and never consults the other end. A
+documentation patch is a claim about behaviour, and that claim was false , in
+an ABI file, about an attribute exported since 2018. That is the whole reason
+v2 exists. Four more corrections rode along:
+
+1. v1 said the value comes from Max Link Speed in Link Capabilities.
+   `pcie_get_supported_speeds()` derives it from the Supported Link Speeds
+   Vector in Link Capabilities **2**, masks it against Max Link Speed, and
+   falls back to Max Link Speed alone only pre-PCIe-r3.0.
+2. v1 never said the value is cached at enumeration in
+   `pci_dev->supported_speeds`. Since v1's `current_link_speed` entry says
+   nothing is cached there, a reader would infer the same for
+   `max_link_speed`. It does not hold.
+3. v1 told callers wanting the ceiling to read `max_link_speed`. That
+   overestimates whenever the upstream port is the slower end.
+4. v1 shipped a private `Forward-Port-Notes:` trailer inside the commit
+   message , the same defect commit `9d2a71a` had already cleaned out of
+   `0015` and `0016`. Nobody re-checked `0021`.
+
+**v2** , sent 2026-08-20 ~22:03 CEST, about eighty minutes after v1. The
+review reply came back with "You sent 2 v2 patches 🙁".
+
+**Why the same-evening churn.** These patches were written over several weeks
+and sat in this outbox undecided. On 2026-08-20 the backlog was released in one
+sitting, and `0021` was reviewed properly only AFTER v1 had gone out , which is
+the whole reason v1 and v2 landed the same evening. The sequencing was the
+error: the review that produced v2 belonged before the send, not after it. A
+patch that has sat for weeks can wait one more day for its own author to read
+it.
+
+Whether two copies of v2 *itself* also arrived cannot be settled from here ,
+lore is behind bot protection and v2's message-id was never recorded. If it
+happened, both copies were byte-identical; there was never more than one v2.
+
+Two process failures either way, both now closed:
+
+* Its message-id was never recorded here. Every other send in the table above
+  has one; this one was written up as "Pending: send v2" in `outbox/SEND.md`
+  and then sent from a different session, so the file said unsent while lore
+  said otherwise. **A send is not done until its message-id is in this table.**
+* Nothing checked the outbox for duplicate Subjects before a send.
+  `tools/patch-audit` now refuses on exactly that.
+
+**v3** , not yet sent. Content identical to v2. It exists to carry the
+`Assisted-by:` tag (see below) and to be the single, unambiguous replacement
+for the two v2s. Threaded to v1's message-id, which keeps the whole series in
+one thread , v2's own message-id is not recoverable from anything we kept.
+
+### The `Assisted-by:` tag , what went wrong
+
+Bjorn also asked: *"Did you forget the Assisted-by: tag?"* Yes.
+
+Every patch in this tree was written with an AI coding assistant.
+`Documentation/process/coding-assistants.rst` , which is in the tree we build
+against , requires that to be declared as
+`Assisted-by: AGENT_NAME:MODEL_VERSION [TOOL1] [TOOL2]`, and `checkpatch.pl`
+validates the format. `0016`, `0017`, `0019` and `0021` v1/v2 all went out
+without it.
+
+Nothing on our side checked. `tests/test_patch_authorship.py` enforced `From:`
+and `Signed-off-by:` and placement, and simply had no rule for this. It does
+now, scoped to the outbox , patches under `sent/` are the historical record of
+what actually reached a list, and rewriting them to match a rule they were sent
+without would make our archive disagree with lore's. They get the tag in their
+next revision instead, which is what v3 is.
+
+The tag we use:
+
+    Assisted-by: Claude:claude-opus-5 checkpatch patch-audit
+
+`Signed-off-by:` stays human and unchanged , the DCO can only be certified by
+a person, and `coding-assistants.rst` says so explicitly.
+
+`0021` was told its documentation describes `max_link_speed` backwards, which
+checking `pcie_get_speed_cap()` confirmed , a v2 is prepared in
+`outbox/0021-v2-*.patch` and `outbox/SEND.md` lists all five corrections.
+`0019` was told `DMA_BUF_IOCTL_GET_PRIORITY` is `_IOR` and never validates the
+`pad` field it documents as reserved, which is also correct; the reply in
+`replies/0019-followup.txt` accepts it and defers the v2 until the shape
+question is answered, since changing the direction bits changes the ioctl
+number.
 
 `0017` is the one most likely to get a substantive reply, and the reply will
 ask for the reproducer. The answer is VMware's `vmnet`/`vmmon`: with
@@ -42,9 +185,9 @@ sent by us.**
 | 0014 | tkg pci pme timeout | Arjan van de Ven | TKG / Clear Linux |
 | 0018 | tkg pci acs override | Mark Weiman | TKG |
 | **0015** | nvme APST default | **ours** | outbox |
-| **0016** | THP defrag default | **ours** | outbox |
-| **0017** | kbuild UBSAN extmod | **ours** | outbox |
-| **0019** | dma-buf priority hint | **ours** | outbox, RFC |
+| **0016** | THP defrag default | **ours** | **sent 2026-08-20** |
+| **0017** | kbuild UBSAN extmod | **ours** | **sent 2026-08-20** |
+| **0019** | dma-buf priority hint | **ours** | **sent 2026-08-20**, RFC |
 | **0020** | dma-buf compressed descriptor | **ours** | held, see below |
 | **0021** | PCI/sysfs docs | **ours** | **sent 2026-08-20** |
 
