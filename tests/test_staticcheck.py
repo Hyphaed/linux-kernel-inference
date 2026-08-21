@@ -126,3 +126,40 @@ def test_real_series_touches_the_dma_buf_files():
     files = sc.files_touched(s)
     assert "drivers/dma-buf/dma-buf.c" in files
     assert "drivers/dma-buf/udmabuf.c" in files
+
+
+def test_cocci_parser_matches_real_coccinelle_output():
+    """Coccinelle does not use the sparse shape, and `_WARN` matches none of it.
+
+    Real 2026-08-21 output: uppercase kind, a column RANGE, and often no colon
+    after the kind. Parsed with the sparse pattern the tool ran and reported
+    zero, which reads exactly like a clean tree. Both spellings appear in
+    scripts/coccinelle/, so both are pinned.
+    """
+    text = (
+        "drivers/dma-buf/udmabuf.c:557:7-8: WARNING opportunity for min()\n"
+        "kernel/exit.c:534:2-9: ERROR: invalid reference to the index variable\n"
+        "drivers/nvme/host/core.c:1398:1-9: WARNING: Consider using %pe\n"
+        "make[1]: Entering directory '/x'\n"
+    )
+    got = sc._parse("coccinelle", text, None)
+    assert len(got) == 3, [f.text for f in got]
+    assert (got[0].file, got[0].line) == ("drivers/dma-buf/udmabuf.c", 557)
+    assert "min()" in got[0].text
+    assert got[1].line == 534 and "ERROR" in got[1].text
+
+    # The sparse pattern must still reject it, so a future refactor that
+    # collapses the two patterns fails here rather than silently reporting 0.
+    assert sc._parse("sparse", text, None) == []
+
+
+def test_cocci_uses_absolute_paths_because_it_runs_with_cwd_in_the_tree():
+    """spatch runs with cwd=tree, so a relative tree path resolves against
+    itself (build/linux-7.1.9/build/linux-7.1.9/...) and every script is
+    'No such file or directory' , which also reports zero findings."""
+    inc = sc._cocci_include(Path("build/linux-7.1.9"))
+    assert inc, "no include flags produced"
+    for flag in inc:
+        if flag.startswith("-") or flag == "--include":
+            continue
+        assert flag.startswith("/"), f"relative path would resolve twice: {flag}"

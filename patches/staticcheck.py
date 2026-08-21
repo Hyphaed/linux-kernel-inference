@@ -167,11 +167,26 @@ def files_touched(series: Path) -> list[str]:
 
 _WARN = re.compile(r"^([^:\s]+\.[ch]):(\d+)(?::\d+)?:\s*(warning|error):\s*(.*)$")
 
+#: Coccinelle does NOT use the sparse/smatch shape and `_WARN` matches none of
+#: its output. It emits an uppercase kind, a column RANGE, and often no colon
+#: after the kind at all:
+#:
+#:     drivers/dma-buf/udmabuf.c:557:7-8: WARNING opportunity for min()
+#:     drivers/dma-buf/udmabuf.c:120:1-9: WARNING: ERR_CAST can be used
+#:
+#: Caught 2026-08-21 by a positive control: spatch reported the injected
+#: min() opportunity and this module reported "0 findings" for the same run.
+#: A parser that silently matches nothing is indistinguishable from a clean
+#: tree, which is the failure this file's own docstring exists to forbid.
+_WARN_COCCI = re.compile(
+    r"^([^:\s]+\.[ch]):(\d+):\d+(?:-\d+)?:\s*(WARNING|ERROR|INFO):?\s*(.*)$")
+
 
 def _parse(tool: str, text: str, only: set[str] | None) -> list[Finding]:
+    pat = _WARN_COCCI if tool == "coccinelle" else _WARN
     found: list[Finding] = []
     for line in text.splitlines():
-        m = _WARN.match(line.strip())
+        m = pat.match(line.strip())
         if not m:
             continue
         f, ln, kind, msg = m.group(1), int(m.group(2)), m.group(3), m.group(4)
@@ -218,20 +233,82 @@ def run_smatch(tree: Path, targets: list[str], jobs: int) -> ToolResult:
     return ToolResult("smatch", True, "", _parse("smatch", text, set(targets)))
 
 
+def _cocci_include(tree: Path) -> list[str]:
+    """The include flags `scripts/coccicheck` builds out of LINUXINCLUDE.
+
+    Reproduced here rather than shelled out to, because coccicheck only knows
+    how to sweep a whole directory and this file exists to check the files a
+    series touches. Keep in step with the arch if this ever builds non-x86.
+    """
+    # Absolute: spatch runs with cwd=tree, so a relative tree path would
+    # resolve against itself (build/linux-7.1.9/build/linux-7.1.9/...).
+    t = str(tree.resolve())
+    inc: list[str] = []
+    for d in ("arch/x86/include", "arch/x86/include/generated", "include",
+              "arch/x86/include/uapi", "arch/x86/include/generated/uapi",
+              "include/uapi", "include/generated/uapi"):
+        inc += ["-I", f"{t}/{d}"]
+    for h in ("include/linux/compiler-version.h", "include/linux/kconfig.h"):
+        inc += ["--include", f"{t}/{h}"]
+    return inc
+
+
+#: `// Options: --foo` in a .cocci header, the flags that script needs to work.
+_COCCI_OPTS = re.compile(r"^//\s*Options:\s*(.+)$", re.M)
+
+
 def run_cocci(tree: Path, targets: list[str], jobs: int) -> ToolResult:
+    """The kernel's own semantic patches, over the touched FILES.
+
+    `make coccicheck` can only be pointed at a directory (`M=`), and the
+    directories this series touches include `fs/` and `kernel/`, which it
+    sweeps recursively. Measured 2026-08-21: the directory form was still
+    inside its first of 11 directories after several minutes, on the first of
+    73 scripts. That is not a scoped check, and this module's whole argument is
+    that an unscoped run is one nobody reads twice.
+
+    `M=<a .c file>` is documented in coccicheck's own header comment and does
+    not work , modern Kbuild rejects it with "Not a directory". So spatch is
+    invoked directly, once per (script, file) pair, which measured 0.3 s a pair
+    and makes the full 73x19 sweep a few minutes rather than hours.
+    """
     exe = find_tool("spatch")
     if not exe:
         return ToolResult("coccinelle", False,
                           "spatch not found (needs OCaml; `sudo apt install "
                           "coccinelle`). The kernel's own semantic checks in "
                           "scripts/coccinelle/ were not run.", [])
-    dirs = sorted({str(Path(t).parent) for t in targets})
-    text = ""
-    for d in dirs:
-        p = subprocess.run(["make", f"-j{jobs}", "coccicheck", "MODE=report",
-                            f"M={d}"], cwd=tree, capture_output=True, text=True)
-        text += (p.stdout or "") + (p.stderr or "")
-    return ToolResult("coccinelle", True, "", _parse("coccinelle", text, set(targets)))
+    scripts = sorted((tree.resolve() / "scripts/coccinelle").rglob("*.cocci"))
+    if not scripts:
+        return ToolResult("coccinelle", False,
+                          f"no scripts/coccinelle/*.cocci in {tree}", [])
+    files = [f for f in targets if (tree / f).is_file()]
+    if not files:
+        return ToolResult("coccinelle", False,
+                          "none of the series' .c files exist in the tree", [])
+
+    inc = _cocci_include(tree)
+    base = [exe, "-D", "report", "--no-show-diff", "--very-quiet",
+            "--no-includes", "--include-headers"]
+
+    def one(script: Path, rel: str) -> str:
+        opts = _COCCI_OPTS.search(script.read_text(errors="replace"))
+        extra = opts.group(1).split() if opts else []
+        cmd = base + ["--cocci-file", str(script)] + extra + inc + [rel]
+        try:
+            # A single pair measured 0.3 s. A minute means the script has gone
+            # pathological on this file; drop it rather than stall the run.
+            r = subprocess.run(cmd, cwd=tree, capture_output=True, text=True,
+                               timeout=60)
+        except subprocess.TimeoutExpired:
+            return ""
+        return (r.stdout or "") + (r.stderr or "")
+
+    from concurrent.futures import ThreadPoolExecutor
+    pairs = [(s, f) for s in scripts for f in files]
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
+        text = "".join(ex.map(lambda sf: one(*sf), pairs))
+    return ToolResult("coccinelle", True, "", _parse("coccinelle", text, set(files)))
 
 
 # ── reporting ──────────────────────────────────────────────────────────────────
