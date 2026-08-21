@@ -1,7 +1,8 @@
 From: Ferran Duarri <ferran.duarri@me.com>
 Subject: Re: [PATCH] mm: thp: default defrag mode to defer+madvise
 
-Please drop this one. The review is right and my commit message has the
+Please drop this one, and not for the reason you asked about. Your mail
+sent me back to read the code properly, and my commit message has the
 mechanism backwards.
 
 I claimed:
@@ -10,7 +11,7 @@ I claimed:
 > becomes eligible, and under memory pressure the faulting thread can
 > stall in compaction.
 
-That does not happen. In vma_thp_gfp_mask(), the current default:
+That doesn't happen. In vma_thp_gfp_mask(), the current default:
 
 	/* Only do synchronous compaction if madvised */
 	if (test_bit(TRANSPARENT_HUGEPAGE_DEFRAG_REQ_MADV_FLAG, ...))
@@ -19,7 +20,7 @@ That does not happen. In vma_thp_gfp_mask(), the current default:
 
 A non-madvised fault gets GFP_TRANSHUGE_LIGHT with no reclaim flag at
 all, so it fails fast and cannot stall in direct compaction. The stall I
-described is only reachable from a MADV_HUGEPAGE region -- and
+described is only reachable from a MADV_HUGEPAGE region, and
 defer+madvise keeps __GFP_DIRECT_RECLAIM for exactly those regions:
 
 	if (test_bit(TRANSPARENT_HUGEPAGE_DEFRAG_KSWAPD_OR_MADV_FLAG, ...))
@@ -35,23 +36,51 @@ THP=always. The patch does close to the opposite of what it claims, and
 on a fragmented machine it is a plausible regression rather than an
 improvement.
 
-Documentation/admin-guide/mm/transhuge.rst says the same thing I should
-have read before writing the commit message: madvise "will enter direct
-reclaim like always but only for regions that are have used
-madvise(MADV_HUGEPAGE)".
+transhuge.rst says the same thing I should have read before writing the
+commit message: madvise "will enter direct reclaim like always but only
+for regions that are have used madvise(MADV_HUGEPAGE)".
 
-I also had no measurement, and said so in the commit message -- the
-machine never reached the condition: thp_fault_fallback was 0 across
-60682 huge-page faults, so direct compaction was never entered and
+I also had no measurement, and said so in the patch itself. The machine
+never reached the condition: thp_fault_fallback was 0 across 60682
+huge-page faults, so direct compaction was never entered and
 compact_stall 0 testified to nothing. With the correctness argument gone
-too, there is nothing holding this up.
+too, there is nothing left holding this up.
 
-If I come back to it, it will be with fault-latency percentiles under
-real memory pressure at madvise versus defer+madvise on a machine that
-actually reaches fallback, and a commit message describing the
-kswapd-wakeup tradeoff rather than a stall that the code does not incur.
+Some context rather than an excuse. I am new to sending anything here.
+I have been building a custom tree for my own workstation for a while,
+and I have been testing patches and posting them as I go, which is the
+wrong order and this is what it produces. I am slowing the pace down.
+The rest of what I have stays local until it has had more testing than
+this one got.
 
-Sorry for the noise, and thanks to whoever pointed the review at it --
-it caught a real error.
+On your actual question, which I would like to answer separately, since
+it is a fair one and the answer surprised me.
+
+For most knobs I would agree with you without reservation: the distro or
+the admin sets it, and the kernel does not need to be in the argument.
+For this particular one, it turns out neither of them can, at least not
+at build or boot time. There is no Kconfig symbol for defrag. mm/Kconfig
+offers ALWAYS, MADVISE and NEVER, plus the shmem and tmpfs variants, and
+every one of those is on the "enabled" axis. There is no boot parameter
+either: setup_transparent_hugepage() sets only TRANSPARENT_HUGEPAGE_FLAG
+and TRANSPARENT_HUGEPAGE_REQ_MADV_FLAG, and thp_anon= is a different
+axis again. Grepping for what sets the DEFRAG bits at all, it is
+defrag_store() and nothing else. So sysfs, after
+subsys_initcall(hugepage_init), is the only way to express a preference
+here.
+
+That is why I reached for the compiled-in value instead of a config
+file, and I should have written the patch about that rather than about a
+stall the code does not incur.
+
+None of which rescues this patch. It is wrong on its own terms and I am
+withdrawing it regardless. But if that gap is real and not deliberate,
+then the next person to want this hits exactly what I hit, and a boot
+parameter or a Kconfig choice would be a better answer than changing the
+default underneath everyone. I am happy to write either one if there is
+interest, and just as happy to hear that the sysfs knob is deliberate
+and sufficient and that this is a non-problem.
+
+Thanks for the review. It caught a real error.
 
 Ferran

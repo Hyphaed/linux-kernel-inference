@@ -332,3 +332,64 @@ and open the lore URLs in a normal browser to confirm the lists accepted them.
 
 Record the message-id in `../SUBMISSION.md`, mark the row in its series table,
 and `git mv` the patch into `../sent/`.
+
+## Queued 2026-08-21 (evening) , the `0016` withdrawal. DRY-RUN VERIFIED.
+
+`../replies/0016-withdrawal.txt`. Withdraws the THP defrag default patch
+because its commit message has the mechanism backwards, and separately answers
+the reviewer's "why not set this in the distro or boot config" question.
+
+Recipients from `get_maintainer.pl --nogit --nogit-fallback --norolestats` run
+against the sent patch, not from memory. `David Hildenbrand <david@kernel.org>`
+is in that list and is who replied , **confirm the address against the `From:`
+header of the mail you actually received before sending**, since more than one
+David reviews mm.
+
+    cd ~/Dev/kernel_inference/upstream-candidates/replies
+    git send-email \
+      --in-reply-to="<20260820190825.221308-1-ferran.duarri@me.com>" \
+      --to="David Hildenbrand <david@kernel.org>" \
+      --cc="Andrew Morton <akpm@linux-foundation.org>" \
+      --cc="Lorenzo Stoakes <ljs@kernel.org>" \
+      --cc=linux-mm@kvack.org \
+      --cc=linux-kernel@vger.kernel.org \
+      0016-withdrawal.txt
+
+Dry run confirmed the threading: `Subject: Re: [PATCH] mm: thp: default defrag
+mode to defer+madvise`, `In-Reply-To:` and `References:` both set to `0016`'s
+message-id, so it lands in the existing thread rather than starting a new one.
+
+**Record the printed `Message-ID:` in `../SUBMISSION.md` immediately.** That
+file's own rule: a send is not done until its message-id is in the table.
+
+### Why the withdrawal and not a v2
+
+`vma_thp_gfp_mask()` gives a non-madvised fault `GFP_TRANSHUGE_LIGHT` with no
+reclaim flag at all, and `GFP_TRANSHUGE_LIGHT` masks out `__GFP_RECLAIM`
+outright (`include/linux/gfp_types.h:387`). So the stall the commit message
+described cannot occur, and `defer+madvise` keeps `__GFP_DIRECT_RECLAIM` for
+madvised regions in both modes. The patch removes no stall; it adds
+`__GFP_KSWAPD_RECLAIM` to the non-madvised branch, which is more background
+work, not less.
+
+What survives, and is in the reply as a question rather than a claim: there is
+no way to express this policy at build or boot time. No Kconfig symbol exists
+for defrag (`mm/Kconfig` covers only the *enabled* axis), and
+`setup_transparent_hugepage()` (`mm/huge_memory.c:1035`) sets only
+`TRANSPARENT_HUGEPAGE_FLAG` and `TRANSPARENT_HUGEPAGE_REQ_MADV_FLAG`.
+Tree-wide, `defrag_store()` is the only writer of the DEFRAG bits.
+
+## Not for LKML: the `udmabuf` backport
+
+`patches/custom/0022-udmabuf-do-not-create-malformed-scatterlists.patch` is
+Jason Gunthorpe's `5bf888673e0d`, rebased onto 7.1.9. It is **Track B**: carried
+with his authorship intact, never signed off by us, never sent as ours.
+
+`5bf888673e0d` carries a `Fixes:` tag, landed in `v7.2`, and is absent from
+7.1.y. Verified by content comparison (`git show <tag>:drivers/dma-buf/udmabuf.c`)
+rather than log traversal, because the local kernel.org mirror is shallow.
+7.1.y did take the later `DMA_ATTR_SKIP_CPU_SYNC` change without this one, so
+the tree has the cacheline fix and still builds a per-4K scatterlist.
+
+A note to `stable@vger.kernel.org` pointing that out is a normal request and
+needs no authorship claim. It is not written yet.
