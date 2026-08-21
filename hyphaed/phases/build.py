@@ -17,6 +17,7 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
+from rich.text import Text
 
 from ..util import log
 from ..util.run import run, run_sudo
@@ -131,6 +132,43 @@ _PKG_KBUILD_RE = re.compile(
 # runtime; it only sets the starting width, and a starting width that is wrong
 # is an ETA that is wrong until the first grow.
 _STEP_ESTIMATE = 34_000
+
+
+class _SettledTimeRemainingColumn(TimeRemainingColumn):
+    """TimeRemainingColumn that stays quiet until its own estimate settles.
+
+    Rich derives remaining time from a sliding speed window. For the first
+    seconds of a kernel build that window holds nothing but the Rust front of
+    the build , BINDGEN, then RUSTC on rust/uapi.o and friends , which are the
+    slowest and least parallel steps in the whole run. Extrapolating 34,000
+    steps from them is what put "ETA 5:18:11" on screen, on the line directly
+    below this file's own honest "estimated 10-25 min on this CPU". Measured on
+    the 2026-08-21 build: 23 steps in the first 15 s, then 78.6 steps/s once
+    the C files started, and the real remaining time was about six minutes.
+
+    An operator reading two numbers that disagree 15-fold has to decide which
+    one to believe, and the wrong choice is to kill a healthy build. So show
+    "-:--:--" until enough of the run is behind us for the window to mean
+    something , the same reasoning as the indeterminate packaging task, which
+    already refuses to invent an ETA for a step whose size is unknown.
+    """
+
+    #: Below this fraction the sample is still dominated by the Rust prologue.
+    SETTLE_FRACTION = 0.05
+    #: ...and never guess from less wall time than this either, for the case
+    #: where a warm ccache makes the early steps fly and the estimate comes out
+    #: optimistic rather than pessimistic.
+    SETTLE_SECONDS = 45.0
+
+    def render(self, task):
+        total = task.total
+        if total and not task.finished:
+            elapsed = task.elapsed or 0.0
+            if ((task.completed / total) < self.SETTLE_FRACTION
+                    or elapsed < self.SETTLE_SECONDS):
+                return Text("-:--:--", style="progress.remaining")
+        return super().render(task)
+
 # Distinct dh_* / dpkg-* steps in the packaging tail. Measured: 6 distinct
 # commands in that same log, not 18.
 _PKG_STEP_ESTIMATE = 8
@@ -381,7 +419,7 @@ def _run_make_with_progress(
         TextColumn("·"),
         TimeElapsedColumn(),
         TextColumn("·  ETA"),
-        TimeRemainingColumn(),
+        _SettledTimeRemainingColumn(),
         console=log.console,
         expand=True,
         transient=False,
