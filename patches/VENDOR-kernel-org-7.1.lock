@@ -86,3 +86,4 @@
 # (drivers/dma-buf/dma-buf.o + drivers/gpu/drm/drm_prime.o), checkpatch
 # clean (0 errors, 0 warnings) ────────────────────────────────────────────
 0020-dma-buf-compressed-descriptor.patch  file://$KI_ROOT/patches/custom/0020-dma-buf-compressed-descriptor.patch  e6ea5aab805cad36d1ac50d68ade25c72a513e19d6fa6bb2426a75d62d074935  local-file
+0022-udmabuf-do-not-create-malformed-scatterlists.patch  file://$KI_ROOT/patches/custom/0022-udmabuf-do-not-create-malformed-scatterlists.patch  a28899478673db789c500c0efbbb3b7862c9362f103f2bf8af410822c6f9fd87  local-file

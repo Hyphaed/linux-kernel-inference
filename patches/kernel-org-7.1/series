@@ -129,3 +129,12 @@
 # drivers/dma-buf/dma-buf.o and drivers/gpu/drm/drm_prime.o both build clean
 # from that exact stacked tree. checkpatch: 0 errors, 0 warnings.
 ../custom/0020-dma-buf-compressed-descriptor.patch
+
+# 0022 , NOT ours. Jason Gunthorpe's upstream 5bf888673e0d, rebased onto
+# 7.1.9. It carries a Fixes: tag, landed in v7.2, and 7.1.y never picked it
+# up, so this tree builds one 4K scatterlist entry per page for every
+# udmabuf. Track B carry: his authorship stays, we add no Signed-off-by.
+# Verified: patch -p1 -F3 applies to 7.1.9, drivers/dma-buf/udmabuf.o
+# compiles clean against this tree's own .config. See
+# upstream-candidates/outbox/SEND.md for the stable@ backport note.
+../custom/0022-udmabuf-do-not-create-malformed-scatterlists.patch
