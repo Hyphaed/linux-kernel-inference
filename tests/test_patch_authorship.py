@@ -276,3 +276,68 @@ def test_assisted_by_is_inside_the_commit_message(patch: Path):
         assert m.start() < sep.start(), (
             f"{patch.name} has an Assisted-by below the '---' separator, "
             f"where git am will silently drop it")
+
+
+# ── Evidence gate (project MUST-RULE, 2026-08-21) ───────────────────────────
+#
+# "No evidence of benefit, no patch." A test cannot judge whether evidence is
+# good. It can catch a patch that says outright it has none, which is the
+# mistake actually made: 0016 shipped as [PATCH], not [RFC], carrying
+#
+#   "No stall measurement is offered with this patch."
+#   "That makes the box unable to testify either way"
+#
+# and that sentence is the one a maintainer quoted back while rejecting it.
+#
+# An admission is fine in an [RFC], which is a different act , proposing a
+# discussion rather than a change. It is not fine in a [PATCH].
+
+_NO_EVIDENCE_PHRASES = re.compile(
+    r"no (?:stall |perf(?:ormance)? |benchmark )?measurement(?:s)? (?:is|are|was|were)? ?"
+    r"(?:offered|provided|included|available)"
+    r"|unable to testify"
+    r"|cannot testify"
+    r"|(?:is |remains )?untested"
+    r"|(?:has )?not been tested"
+    r"|no reproducer",
+    flags=re.I,
+)
+
+
+def _subject(patch: Path) -> str:
+    m = re.search(r"^Subject: (.*)$", patch.read_text(errors="ignore"), flags=re.M)
+    return m.group(1) if m else ""
+
+
+def _commit_message(patch: Path) -> str:
+    """Everything above the '---' separator , the part maintainers read."""
+    text = patch.read_text(errors="ignore")
+    sep = re.search(r"^---\s*$", text, flags=re.M)
+    return text[: sep.start()] if sep else text
+
+
+def _sendable() -> list[Path]:
+    """Patches that could still go out.
+
+    `upstream-candidates/sent/` is excluded, and deliberately: it is the
+    record of what was actually mailed, and editing it to satisfy a gate
+    would falsify that record. 0016 lives there and would fail this test,
+    which is the point , it is why the test exists. You cannot fix a patch
+    that has already been sent; you can stop the next one.
+    """
+    return [p for p in _ours() if "upstream-candidates/sent/" not in p.as_posix()]
+
+
+@pytest.mark.parametrize("patch", _sendable(), ids=lambda p: p.name)
+def test_unmeasured_patches_are_marked_rfc(patch: Path):
+    """A patch admitting it has no evidence must not be sent as [PATCH]."""
+    msg = _commit_message(patch)
+    m = _NO_EVIDENCE_PHRASES.search(msg)
+    if not m:
+        return
+    subject = _subject(patch)
+    assert "RFC" in subject.upper(), (
+        f"{patch.name} says {m.group(0)!r} in its commit message but is "
+        f"subject {subject!r}. Project MUST-RULE: no evidence of benefit, no "
+        f"patch. Either get the measurement, or send it as [RFC PATCH] "
+        f"leading with what is missing.")
