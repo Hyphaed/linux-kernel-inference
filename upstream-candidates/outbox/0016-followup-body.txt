@@ -1,11 +1,13 @@
 Lorenzo, we crossed. Yours was 18:53, my withdrawal 19:10, so this isn't me
 arguing back at it.
 
-You're right about the process bit and I should've got there on my own. I
-used a coding assistant on the changelog and on this thread, and
-generated-content.rst covers that. There was no Assisted-by tag and there
-should have been one. Next ones will have it.
+You're right, and so is David. These are patches I run on my own
+workstation, they aren't settled yet, and I started posting them to put some
+order on the pile. Wrong way round, and I can see that now.
 
+On the process bit I should've got there myself. Coding assistant on the
+changelog and on this thread, which generated-content.rst covers, and no
+Assisted-by tag when there should have been one. Next ones will have it.
 Reading both links now.
 
 Patch is dead anyway, I had vma_thp_gfp_mask() backwards. That's in the
