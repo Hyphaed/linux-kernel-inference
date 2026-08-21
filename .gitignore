@@ -56,3 +56,8 @@ __pycache__/
 .venv/
 .pytest_cache/
 copyfail-check/
+
+# hyperresearch (per-project research vault)
+.hyperresearch/
+research/temp/
+research/index/
