@@ -112,6 +112,35 @@ def _ensure_dracut_modules_load_exclusion() -> None:
     log.ok("initrd will no longer ask for a module it does not carry")
 
 
+def _regenerable_kernels() -> list[str]:
+    """Kernels that actually have an image and modules to build an initrd from.
+
+    NOT `dracut --force --regenerate-all`. That walks every directory under
+    /lib/modules and fails the whole run on the first one it cannot handle,
+    which on a machine that has had kernels removed is a certainty: purged
+    packages leave the depmod metadata behind (modules.dep and friends, no
+    .ko files, no /boot/vmlinuz), and dracut dies on them with exit 6 and a
+    wall of kmod_module_parse_depline errors. Observed 2026-08-21 with six
+    such leftovers from 7.0.0-14 through 7.0.0-29.
+
+    A kernel counts as real when it has both a modules tree and an installed
+    image. Everything else is residue.
+    """
+    mods = Path("/lib/modules")
+    if not mods.is_dir():
+        return []
+    out: list[str] = []
+    for d in sorted(mods.iterdir()):
+        if not d.is_dir():
+            continue
+        if not (d / "kernel").is_dir():
+            continue  # metadata-only residue from a purged package
+        if not any(Path("/boot").glob(f"vmlinuz-{d.name}")):
+            continue  # modules without an image , nothing to pair an initrd with
+        out.append(d.name)
+    return out
+
+
 def apply_boot_config(regenerate: bool = True) -> None:
     """Write the boot-image and udev config this project owns, nothing else.
 
@@ -133,9 +162,26 @@ def apply_boot_config(regenerate: bool = True) -> None:
     if shutil.which("dracut") is None:
         log.warn("dracut not found , regenerate your initramfs manually for this to take effect")
         return
-    log.info("regenerating the initramfs for every installed kernel")
-    run_sudo(["dracut", "--force", "--regenerate-all"])
-    log.ok("initramfs rebuilt , the excluded fragments are out of the boot image")
+
+    kernels = _regenerable_kernels()
+    if not kernels:
+        log.warn("no complete kernel found in /lib/modules , regenerate your initramfs manually")
+        return
+
+    log.info(f"regenerating the initramfs for {len(kernels)} kernel(s): {', '.join(kernels)}")
+    failed: list[str] = []
+    for kver in kernels:
+        try:
+            run_sudo(["dracut", "--force", "--kver", kver])
+        except RuntimeError as e:
+            log.warn(f"dracut failed for {kver} , continuing: {e}")
+            failed.append(kver)
+    if failed:
+        log.warn(f"{len(failed)} kernel(s) not rebuilt: {', '.join(failed)}")
+        log.info("the others are done; a kernel that fails here is usually a "
+                 "half-removed package, not a problem with this config")
+    else:
+        log.ok("initramfs rebuilt , the excluded fragments are out of the boot image")
 
 
 _NUMA_RULE = Path("/etc/udev/rules.d/62-hyphaed-pci-numa-node.rules")

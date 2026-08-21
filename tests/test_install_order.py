@@ -116,3 +116,63 @@ def test_online_numa_nodes_counts_real_sysfs():
     """Sanity: this box has exactly one node (i9-14900KF, single socket)."""
     from hyphaed.phases.install import _online_numa_nodes
     assert _online_numa_nodes() >= 1
+
+
+# ── _regenerable_kernels: skip residue from purged packages ─────────────────
+
+
+def _fake_kernel_tree(root, name, *, modules=True, image=True):
+    """Lay out one kernel the way dpkg leaves it, complete or residual."""
+    d = root / "lib" / "modules" / name
+    d.mkdir(parents=True)
+    # depmod metadata is left behind even by a purge, so every case gets it.
+    (d / "modules.dep").write_text("")
+    if modules:
+        (d / "kernel").mkdir()
+    if image:
+        boot = root / "boot"
+        boot.mkdir(exist_ok=True)
+        (boot / f"vmlinuz-{name}").write_text("")
+
+
+def test_regenerable_kernels_skips_purged_leftovers(tmp_path, monkeypatch):
+    """A purged kernel leaves modules.dep with no kernel/ and no vmlinuz.
+
+    `dracut --force --regenerate-all` walks those and fails the entire run
+    with exit 6 (observed 2026-08-21, six leftovers from 7.0.0-14 to -29), so
+    apply_boot_config() iterates only kernels that have both halves.
+    """
+    from hyphaed.phases import install as install_phase
+
+    _fake_kernel_tree(tmp_path, "7.1.9-hyphaed")
+    _fake_kernel_tree(tmp_path, "7.0.0-30-generic")
+    # residue: metadata only, package purged
+    _fake_kernel_tree(tmp_path, "7.0.0-29-generic", modules=False, image=False)
+    _fake_kernel_tree(tmp_path, "7.0.0-14-generic", modules=False, image=False)
+    # modules present but the image is gone , still nothing to build against
+    _fake_kernel_tree(tmp_path, "7.1.2-hyphaed", modules=True, image=False)
+
+    real_path = install_phase.Path
+
+    def _fake_path(p):
+        s = str(p)
+        if s.startswith("/lib/modules") or s.startswith("/boot"):
+            return real_path(str(tmp_path) + s)
+        return real_path(s)
+
+    monkeypatch.setattr(install_phase, "Path", _fake_path)
+    got = install_phase._regenerable_kernels()
+
+    assert got == ["7.0.0-30-generic", "7.1.9-hyphaed"], got
+
+
+def test_regenerable_kernels_empty_when_no_modules_dir(tmp_path, monkeypatch):
+    """No /lib/modules at all must return [], not raise."""
+    from hyphaed.phases import install as install_phase
+
+    real_path = install_phase.Path
+    monkeypatch.setattr(
+        install_phase, "Path",
+        lambda p: real_path(str(tmp_path) + str(p)) if str(p).startswith(("/lib", "/boot")) else real_path(str(p)),
+    )
+    assert install_phase._regenerable_kernels() == []
