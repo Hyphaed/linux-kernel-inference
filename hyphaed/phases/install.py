@@ -57,6 +57,61 @@ def _ensure_dracut_no_nvidia_conf() -> None:
     log.ok("NVIDIA excluded from initramfs; recovery boot will reach Ubuntu recovery menu")
 
 
+_DRACUT_MODULE_DIR = Path("/usr/lib/dracut/modules.d/99hyphaed-no-nvidia")
+_DRACUT_MODULE_BODY = (
+    "#!/bin/bash\n"
+    "# 99hyphaed-no-nvidia , written by hyphaed/phases/install.py.\n"
+    "#\n"
+    "# Companion to 99-hyphaed-no-nvidia-initramfs.conf. That file's\n"
+    "# omit_drivers keeps the NVIDIA modules themselves out of the image, and it\n"
+    "# works , it is why the old 'nvidia_fs: Unknown symbol nvidia_p2p_get_pages'\n"
+    "# storm is gone. But omit_drivers only omits KERNEL MODULES, and dracut's\n"
+    "# own 00systemd module copies /etc/modules-load.d in wholesale, so the\n"
+    "# fragment ASKING for nvidia_fs still shipped. The old eight-line storm was\n"
+    "# simply replaced by one line, every boot:\n"
+    "#\n"
+    "#   systemd-modules-load[400]: Failed to find module 'nvidia_fs'\n"
+    "#\n"
+    "# Same reasoning as the conf it accompanies: an expected error teaches you\n"
+    "# to ignore nvidia_fs errors, which is the wrong reflex for a GPUDirect\n"
+    "# Storage path. The real-root load at t=60s is unaffected , that is where\n"
+    "# nvidia_fs was always meant to come up.\n"
+    "#\n"
+    "# The 99 prefix is load-bearing: dracut runs module install() hooks in\n"
+    "# numeric order, so this must sort after 00systemd or there is nothing\n"
+    "# there to remove yet.\n"
+    "check()   { return 0; }\n"
+    "depends() { echo systemd; return 0; }\n"
+    "install() {\n"
+    '    rm -f "$initdir"/etc/modules-load.d/nvidia-fs.conf \\\n'
+    '          "$initdir"/usr/lib/modules-load.d/nvidia-fs.conf 2>/dev/null\n'
+    "    return 0\n"
+    "}\n"
+)
+
+
+def _ensure_dracut_modules_load_exclusion() -> None:
+    """Keep /etc/modules-load.d/nvidia-fs.conf out of the initramfs.
+
+    omit_drivers cannot do this , it omits modules, not the config fragments
+    that request them , so it takes a dracut module that deletes the file from
+    $initdir after 00systemd has copied the directory in.
+    """
+    target = _DRACUT_MODULE_DIR / "module-setup.sh"
+    try:
+        if target.read_text() == _DRACUT_MODULE_BODY:
+            log.ok(f"dracut modules-load exclusion already in place ({_DRACUT_MODULE_DIR.name})")
+            return
+        log.info(f"{_DRACUT_MODULE_DIR.name} differs from the shipped version , refreshing")
+    except OSError:
+        pass
+    log.info(f"writing {_DRACUT_MODULE_DIR.name} , drops the nvidia_fs modules-load fragment from the initramfs")
+    run_sudo(["mkdir", "-p", str(_DRACUT_MODULE_DIR)])
+    run_sudo(["tee", str(target)], input_str=_DRACUT_MODULE_BODY)
+    run_sudo(["chmod", "0755", str(target)])
+    log.ok("initrd will no longer ask for a module it does not carry")
+
+
 _NUMA_RULE = Path("/etc/udev/rules.d/62-hyphaed-pci-numa-node.rules")
 _NUMA_RULE_BODY = (
     "# Consumer boards routinely omit ACPI _PXM for PCIe slots, so the kernel\n"
@@ -226,6 +281,7 @@ def run_phase(ctx) -> None:
             log.warn("note this prompt defaults to NO, so a bare Enter declines it")
             raise SystemExit(0)
         _ensure_dracut_no_nvidia_conf()
+        _ensure_dracut_modules_load_exclusion()
         _ensure_pci_numa_rule()
         failed_optional: list[str] = []
         for d in debs:
