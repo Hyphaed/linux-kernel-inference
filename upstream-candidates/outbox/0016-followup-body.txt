@@ -1,15 +1,15 @@
-Lorenzo, our mails crossed, yours at 18:53 and my withdrawal at 19:10, so
-this is not an argument with it.
+Lorenzo, we crossed. Yours was 18:53, my withdrawal 19:10, so this isn't me
+arguing back at it.
 
-I am reading both documents you linked, coding-assistants.rst and
-generated-content.rst.
+You're right about the process bit and I should've got there on my own. I
+used a coding assistant on the changelog and on this thread, and
+generated-content.rst covers that. There was no Assisted-by tag and there
+should have been one. Next ones will have it.
 
-On the process point you are right, and I should have got there without
-being told. I used a coding assistant on the changelog and on this thread,
-and generated-content.rst covers that. There was no Assisted-by tag on the
-patch and there should have been. Future postings will carry one.
+Reading both links now.
 
-The patch is withdrawn either way, for a mechanism error I describe in the
+Patch is dead anyway, I had vma_thp_gfp_mask() backwards. That's in the
 other mail.
 
+Cheers,
 Ferran
