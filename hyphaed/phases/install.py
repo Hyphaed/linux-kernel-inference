@@ -112,6 +112,32 @@ def _ensure_dracut_modules_load_exclusion() -> None:
     log.ok("initrd will no longer ask for a module it does not carry")
 
 
+def apply_boot_config(regenerate: bool = True) -> None:
+    """Write the boot-image and udev config this project owns, nothing else.
+
+    These three writers used to be reachable only from inside the install
+    phase, past the "install N packages?" confirm , so applying a one-line boot
+    fix meant reinstalling the kernel. They are idempotent and independent of
+    any build, and `hyphaed update-boot-config` calls this.
+
+    Regenerating the initramfs is the part that actually takes effect: dracut
+    copies /etc/modules-load.d in wholesale at image-build time, so writing the
+    exclusion module changes nothing until the image is rebuilt.
+    """
+    _ensure_dracut_no_nvidia_conf()
+    _ensure_dracut_modules_load_exclusion()
+    _ensure_pci_numa_rule()
+    if not regenerate:
+        log.info("skipping initramfs regeneration , the changes take effect on the next rebuild")
+        return
+    if shutil.which("dracut") is None:
+        log.warn("dracut not found , regenerate your initramfs manually for this to take effect")
+        return
+    log.info("regenerating the initramfs for every installed kernel")
+    run_sudo(["dracut", "--force", "--regenerate-all"])
+    log.ok("initramfs rebuilt , the excluded fragments are out of the boot image")
+
+
 _NUMA_RULE = Path("/etc/udev/rules.d/62-hyphaed-pci-numa-node.rules")
 _NUMA_RULE_BODY = (
     "# Consumer boards routinely omit ACPI _PXM for PCIe slots, so the kernel\n"

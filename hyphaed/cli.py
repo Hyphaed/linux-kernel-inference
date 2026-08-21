@@ -89,6 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("verify", help="post-reboot health check (mitigations, BORE, cmdline, DKMS, …)")
     sub.add_parser("doctor", help="wide self-diagnostic: detect + verify + repo + driver/module health")
     sub.add_parser("update-cmdline", help="write/update GRUB cmdline drop-in only (no kernel build)")
+    sub.add_parser("update-boot-config", help="write the dracut/udev drop-ins this project owns + rebuild the initramfs (no kernel build)")
     sub.add_parser("bisect", help="binary-search the fragment list to find a boot-breaking fragment")
     sub.add_parser("completion", help="emit bash/zsh completion script — `eval \"$(hyphaed completion)\"`")
     sp_compare = sub.add_parser("compare", help="diff two kernel .config files")
@@ -388,6 +389,23 @@ def _cmd_update_cmdline(ctx: Ctx) -> int:
     return 0
 
 
+def _cmd_update_boot_config(ctx: Ctx) -> int:
+    """Apply the boot-image and udev drop-ins , no kernel build, no packages.
+
+    Exists because these writers were previously reachable only from inside the
+    install phase, past its package-install confirm, so applying a one-line
+    boot fix meant reinstalling the kernel.
+    """
+    from .phases import install as install_phase
+    if ctx.dry_run:
+        log.info("dry run , would write the dracut exclusions + PCI NUMA rule "
+                 "and regenerate the initramfs")
+        return 0
+    install_phase.apply_boot_config()
+    log.ok("boot config applied , reboot for it to take effect")
+    return 0
+
+
 def _cmd_doctor(ctx: Ctx) -> int:
     """Unified self-diagnostic across the whole stack."""
     from rich.table import Table
@@ -556,7 +574,7 @@ def _cmd_bisect(ctx: Ctx) -> int:
 def _cmd_completion() -> int:
     """Emit a bash completion script."""
     from . import phases, presets
-    sub_cmds = "rebase detect list-presets status clean print-config uninstall prune verify doctor update-cmdline bisect completion compare install-deps scx snapshot fetch-patches"
+    sub_cmds = "rebase detect list-presets status clean print-config uninstall prune verify doctor update-cmdline update-boot-config bisect completion compare install-deps scx snapshot fetch-patches"
     phases_str = " ".join(phases.ORDER)
     presets_str = " ".join(presets.list_available())
     script = f'''# hyphaed bash completion — `eval "$(hyphaed completion)"` or save to /etc/bash_completion.d/hyphaed
@@ -1181,6 +1199,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "update-cmdline":
         return _cmd_update_cmdline(ctx)
+
+    if args.cmd == "update-boot-config":
+        return _cmd_update_boot_config(ctx)
 
     if args.cmd == "doctor":
         return _cmd_doctor(ctx)

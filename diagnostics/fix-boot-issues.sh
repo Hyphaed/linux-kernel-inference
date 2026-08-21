@@ -280,8 +280,16 @@ cat <<'EXPLAIN'
       Do NOT "fix" this with a sysusers.d fragment: a fragment installed on
       the real root is not in the initrd either, so it cannot help. The
       rule acts on /sys/module/greenboost/, which cannot exist that early,
-      so the fix is to keep it out of the boot image , greenboost_gaming's
-      install.sh now ships an initramfs hook that does exactly that.
+      so the fix is to keep it out of the boot image.
+      Corrected 2026-08-21 (later the same day): greenboost_gaming's
+      install.sh did ship an exclusion for this, and it had never run. It
+      was an initramfs-tools hook, installed on the strength of
+      /etc/initramfs-tools/hooks/ existing , which it does here, shipped by
+      initramfs-tools-core, while dracut is what actually builds the image.
+      Both installers now detect the generator from the initramfs-tools
+      META-package and kernel-install's 50-dracut.install, and dracut gets a
+      module rather than a conf line, because omit_drivers omits kernel
+      modules and this is a tmpfiles fragment. Verified out of the image.
 
   · Failed to resolve interface "NetworkManager": No such device
       resolvconf handing systemd-resolved a tag, not an interface name.
@@ -292,6 +300,14 @@ cat <<'EXPLAIN'
       The adapter is powered off (Powered: no), so restoring a paired
       device at boot had nothing to talk to. Turn Bluetooth on and it goes
       away. Not a fault.
+
+  · systemd-modules-load: Failed to find module 'nvidia_fs'
+      Covered in section 2 above. Same class as the tmpfiles line: the
+      fragment asking for the module ships in the boot image while the
+      module itself (correctly) does not. omit_drivers cannot remove a
+      modules-load fragment, so 99hyphaed-no-nvidia deletes it from the
+      image. Apply it without rebuilding a kernel:
+          sudo python3 -m hyphaed update-boot-config
 
   · KHO: Failed to reserve lowmem scratch buffer
       Kexec HandOver is compiled in but no scratch region was reserved
