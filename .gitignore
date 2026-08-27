@@ -57,7 +57,8 @@ __pycache__/
 .pytest_cache/
 copyfail-check/
 
-# hyperresearch (per-project research vault)
+# hyperresearch (per-project research vault). Local only: 38 MB of it is
+# third-party PDFs fetched from arXiv, and the notes carry other people's full
+# text. Our own prose about that reading lives in docs/research/ and IS tracked.
 .hyperresearch/
-research/temp/
-research/index/
+research/
