@@ -19,10 +19,14 @@ state/
 #   kernel-patches/          , CachyOS/kernel-patches
 #   linux-tkg/, linux-cachyos/
 #   kernel-hardening-checker/, vex-kernel-checker/, kernel-research/
+#   cache-ext-upstream/      , cache-ext (0023) reference repo + kernel fork,
+#                              for cross-checking the forward-port and running
+#                              a real eviction-policy test -- never our code
 # ---------------------------------------------------------------------------
 linux/
 torvalds_linux/
 github/
+cache-ext-upstream/
 kernel-patches/
 linux-tkg/
 linux-cachyos/
