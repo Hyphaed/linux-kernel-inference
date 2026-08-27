@@ -87,3 +87,10 @@
 # clean (0 errors, 0 warnings) ────────────────────────────────────────────
 0020-dma-buf-compressed-descriptor.patch  file://$KI_ROOT/patches/custom/0020-dma-buf-compressed-descriptor.patch  e6ea5aab805cad36d1ac50d68ade25c72a513e19d6fa6bb2426a75d62d074935  local-file
 0022-udmabuf-do-not-create-malformed-scatterlists.patch  file://$KI_ROOT/patches/custom/0022-udmabuf-do-not-create-malformed-scatterlists.patch  a28899478673db789c500c0efbbb3b7862c9362f103f2bf8af410822c6f9fd87  local-file
+
+# ─── cache_ext: customizable page-cache eviction via eBPF (Tal Zussman et
+# al., SOSP '25, doi.org/10.1145/3731569.3764820; code at
+# github.com/cache-ext/cache_ext + github.com/cache-ext/linux-cache-ext,
+# GPL-2.0). Forward-ported from their v6.6.8 kernel fork to 7.1.10 — see
+# patches/kernel-org-7.1/series for the full API-drift list. ───────────────
+0023-mm-bpf-cache-ext-page-cache-eviction.patch  file://$KI_ROOT/patches/custom/0023-mm-bpf-cache-ext-page-cache-eviction.patch  2a97cf65eaefa113a9e1d899a201fa8a6ab87e0aeb58646b59b01bb4d5413de8  local-file

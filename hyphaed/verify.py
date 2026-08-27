@@ -66,11 +66,35 @@ def check_mitigations() -> Check:
 
 
 def check_bore_active() -> Check:
+    """0001 — BORE's own sysctl first, debugfs only as a fallback.
+
+    This used to read /sys/kernel/debug/sched/features exclusively, which
+    needs root: an unprivileged `hyphaed verify` reported "BORE scheduler
+    active: FAIL — can\'t read ... (run as root)" on a machine where BORE was
+    demonstrably on. A check that fails because it could not look is a false
+    negative, and it sat next to twenty genuine results telling the operator
+    the scheduler patch had not applied.
+
+    kernel.sched_bore is world-readable and only exists in a BORE kernel, so
+    it answers both questions (patch present, and switched on) without
+    privilege.
+    """
+    val = _read("/proc/sys/kernel/sched_bore")
+    if val:
+        on = val.strip() == "1"
+        return Check("BORE scheduler active", on,
+                     "kernel.sched_bore=1" if on
+                     else f"compiled in but disabled (sched_bore={val})")
+
     feats = _read("/sys/kernel/debug/sched/features")
     if not feats:
-        return Check("BORE scheduler active", False, "can't read /sys/kernel/debug/sched/features (run as root)")
+        return Check("BORE scheduler active", False,
+                     "no kernel.sched_bore sysctl and debugfs unreadable — "
+                     "BORE is probably not in this kernel")
     has_bore = "BORE" in feats
-    return Check("BORE scheduler active", has_bore, "feature flag present" if has_bore else "BORE not found in sched features")
+    return Check("BORE scheduler active", has_bore,
+                 "feature flag present" if has_bore
+                 else "BORE not found in sched features")
 
 
 def check_sched_ext() -> Check:
@@ -192,6 +216,138 @@ def check_scx_state() -> Check:
     return Check("sched_ext kernel support", ok, detail)
 
 
+# ---------------------------------------------------------------------------
+# Patch-series checks.
+#
+# Everything above verifies the ENVIRONMENT — the right kernel booted, the
+# modules loaded, the cmdline composed. None of it verifies that the twenty
+# patches in patches/kernel-org-7.1/series actually do anything, which is how
+# the series got carried across four kernel bumps on `git am` exit status
+# alone. These are the cheap unprivileged half; the full battery lives in
+# tests/kernel_runtime/.
+# ---------------------------------------------------------------------------
+
+def _sysctl_setters(key: str, dirs: list[str] | None = None) -> list[str]:
+    """Names of the sysctl.d files that assign `key`.
+
+    Takes the directories as an argument so a test can point it somewhere
+    real instead of monkeypatching Path out from under the module, which is
+    how the first version of this got a silently-empty result.
+    """
+    dirs = dirs if dirs is not None else ["/usr/lib/sysctl.d", "/etc/sysctl.d"]
+    pat = re.compile(rf"^\s*{re.escape(key)}\s*=", re.M)
+    found = []
+    for d in dirs:
+        for f in sorted(Path(d).glob("*.conf")) if Path(d).is_dir() else []:
+            if pat.search(_read(str(f))):
+                found.append(f.name)
+    return found
+
+
+def check_vfs_cache_pressure() -> Check:
+    """0003 — the one xanmod sysctl default nothing in userspace overrides,
+    so its live value is real evidence the patched kernel is running."""
+    val = _read("/proc/sys/vm/vfs_cache_pressure")
+    return Check("0003 vfs_cache_pressure=50", val == "50",
+                 val or "unreadable")
+
+
+def check_max_map_count_masked(sysctl_dirs: list[str] | None = None) -> Check:
+    """0004 raises the compiled-in default to 2147483642 and it never takes
+    effect: systemd ships /usr/lib/sysctl.d/50-default.conf and
+    55-map-count.conf setting 1048576, and userspace runs last.
+
+    Reported as a real state rather than a failure — the patch applies, it
+    just cannot reach the running system. Flagged so nobody cites
+    vm.max_map_count as proof the series is live.
+    """
+    val = _read("/proc/sys/vm/max_map_count")
+    setters = _sysctl_setters("vm.max_map_count", sysctl_dirs)
+    if not setters:
+        return Check("0004 max_map_count", val == "2147483642",
+                     f"{val} (no distro override — patch is live)")
+    return Check("0004 max_map_count MASKED", True,
+                 f"{val}, overridden by {', '.join(setters)}")
+
+
+def check_rq_affinity() -> Check:
+    """0009 adds QUEUE_FLAG_SAME_FORCE to the mq default, which reads back
+    as rq_affinity=2. Stock is 1. Unambiguous."""
+    vals = {p.parent.parent.name: _read(str(p))
+            for p in Path("/sys/block").glob("nvme*/queue/rq_affinity")}
+    if not vals:
+        return Check("0009 rq_affinity=2", False, "no nvme queues")
+    bad = {k: v for k, v in vals.items() if v != "2"}
+    return Check("0009 rq_affinity=2", not bad,
+                 "all nvme" if not bad else f"wrong on {bad}")
+
+
+def check_nvme_apst_latency() -> Check:
+    """0013 lowers the APST entry threshold so the drive stops parking in
+    deep power states between inference reads."""
+    val = _read("/sys/module/nvme_core/parameters/default_ps_max_latency_us")
+    return Check("0013 nvme APST 25000us", val == "25000", val or "unreadable")
+
+
+def check_thp_defrag_default() -> Check:
+    """0014 — no Kconfig symbol and no boot parameter can set this
+    (defrag_store() is the only writer), so the bracketed value IS the
+    compiled-in default unless something wrote the sysfs file after boot."""
+    raw = _read("/sys/kernel/mm/transparent_hugepage/defrag")
+    m = re.search(r"\[([\w+]+)\]", raw)
+    sel = m.group(1) if m else ""
+    return Check("0014 THP defrag=defer+madvise", sel == "defer+madvise",
+                 sel or raw or "unreadable")
+
+
+def check_dmabuf_hint_uapi() -> Check:
+    """0019/0020 ship UAPI. If the definitions did not reach
+    /usr/include/linux/dma-buf.h, nothing in userspace can use them however
+    correct the kernel side is."""
+    text = _read("/usr/include/linux/dma-buf.h")
+    want = ("DMA_BUF_IOCTL_SET_PRIORITY", "DMA_BUF_IOCTL_GET_PRIORITY",
+            "DMA_BUF_IOCTL_SET_COMPRESSION", "DMA_BUF_IOCTL_GET_COMPRESSION")
+    missing = [w for w in want if w not in text]
+    return Check("0019/0020 dma-buf UAPI installed", not missing,
+                 "all 4 ioctls" if not missing else f"missing {missing}")
+
+
+def check_cache_ext_registered() -> Check:
+    """0023 — its /proc control file plus the struct_ops shadow type in BTF.
+
+    The BTF half matters: the 6.6 X-macro registration is gone in 7.1 and was
+    replaced by an explicit register_bpf_struct_ops() call added by hand
+    during the forward-port. Without it the type would silently never
+    register and no policy could ever attach.
+    """
+    if not Path("/proc/page_cache_ext_enabled_cgroup").exists():
+        return Check("0023 cache_ext registered", False, "/proc file missing")
+    btf = _cmd(["bpftool", "btf", "dump", "file", "/sys/kernel/btf/vmlinux"])
+    if not btf:
+        return Check("0023 cache_ext registered", True,
+                     "/proc file present (bpftool unavailable, BTF unchecked)")
+    ok = "bpf_struct_ops_page_cache_ext_ops" in btf
+    return Check("0023 cache_ext registered", ok,
+                 "struct_ops type in BTF" if ok
+                 else "compiled in but struct_ops type NOT registered")
+
+
+def check_nvidia_fs_loaded() -> Check:
+    """GDS silently degrades to POSIX compat mode when nvidia_fs is absent —
+    every NVMe<->GPU byte crosses PCIe twice. postinstall has caught this
+    since 7.1.8, but only when the install phase actually runs; a manual
+    `dpkg -i` skips it entirely.
+    """
+    gds = shutil.which("gdscheck") is not None or \
+        Path("/usr/local/cuda/lib64/libcufile.so").exists()
+    if not gds:
+        return Check("nvidia_fs loaded", True, "GDS not installed — n/a")
+    loaded = "nvidia_fs" in _cmd(["lsmod"])
+    return Check("nvidia_fs loaded", loaded,
+                 "GDS peer-to-peer active" if loaded
+                 else "NOT loaded — GDS is in POSIX compat mode")
+
+
 def run_all(flavour: str, cmdline_expected: list[str] | None = None) -> list[Check]:
     cmdline_expected = cmdline_expected or [
         "iommu=pt",
@@ -214,6 +370,15 @@ def run_all(flavour: str, cmdline_expected: list[str] | None = None) -> list[Che
         check_greenboost_loaded(),
         check_dkms_status(flavour),
         check_vmware_loaded(),
+        check_nvidia_fs_loaded(),
+        # patch series
+        check_vfs_cache_pressure(),
+        check_max_map_count_masked(),
+        check_rq_affinity(),
+        check_nvme_apst_latency(),
+        check_thp_defrag_default(),
+        check_dmabuf_hint_uapi(),
+        check_cache_ext_registered(),
     ]
 
 

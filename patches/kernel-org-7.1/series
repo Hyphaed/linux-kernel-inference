@@ -86,6 +86,83 @@
 #
 # Sources pinned in patches/VENDOR-kernel-org-7.1.lock.
 
+#
+# Runtime verification, 7.1.10, 2026-08-25. First time the series was checked
+# against a booted kernel rather than against `git am` exit status. Suite in
+# tests/kernel_runtime/; cheap half folded into `python -m hyphaed verify`.
+#
+# Three patches are NOT what their names suggest, and none of the three is
+# broken , they are carried, they apply, and they do not reach the running
+# system:
+#
+#   0002-xanmod-zen-vmscan-swap    Patches vm_swappiness 60 -> 10.
+#                            /etc/sysctl.d/99-zzz-greenboost.conf sets 10 as
+#                            well, so the live value is identical with or
+#                            without the patch and can never testify either
+#                            way. Do not cite vm.swappiness as evidence the
+#                            series is applied.
+#
+#   0004-xanmod-zen-max-map-count  Raises DEFAULT_MAX_MAP_COUNT to
+#                            INT_MAX-5 (2147483642). MASKED: systemd ships
+#                            /usr/lib/sysctl.d/50-default.conf and
+#                            55-map-count.conf both setting 1048576, and
+#                            userspace runs after the kernel default. The
+#                            patched value has never been in effect on this
+#                            machine. Left in place rather than dropped ,
+#                            1048576 is ample here and removing it would
+#                            change nothing , but it is decoration, not a
+#                            tuning. Pinned by
+#                            verify.check_max_map_count_masked(), which
+#                            flips to asserting the patched default if the
+#                            distro override ever goes away.
+#
+#   0005-xanmod-zen-500hz-timer    Adds an HZ_500 Kconfig CHOICE. It does
+#                            not select it. The fragments pick HZ_1000, so
+#                            the built kernel runs at 1000 Hz. The name
+#                            reads like a setting; it is an option.
+#
+# Two more are inert for a configuration reason rather than a masking one:
+#
+#   0010 / 0011              Both only change mq-deadline's defaults, and
+#                            the NVMe runs 'none'. Proven correct by
+#                            switching the scheduler in root-steps.sh and
+#                            reading front_merges / write_expire back, then
+#                            restoring it.
+#
+#   0018                     Boot option available, deliberately not on the
+#                            cmdline.
+#
+# And one that cannot be proven on this hardware at all:
+#
+#   0008-xanmod-blk-wbt-latency    Removes the 75 ms rotational branch so
+#                            every queue targets 2 ms. Stock already gives
+#                            2 ms to non-rotational queues and this box has
+#                            no rotational disk, so the observed value
+#                            agrees with the patch and proves nothing. The
+#                            test fails deliberately if a rotational queue
+#                            ever appears, since that would make it
+#                            measurable.
+#
+# Confirmed genuinely live, with an observable nothing else could produce:
+# 0001 (kernel.sched_bore=1), 0003 (vfs_cache_pressure=50, uncontested),
+# 0009 (rq_affinity=2 , stock is 1), 0013 (APST 25000), 0014 (THP defrag
+# [defer+madvise]), 0015 (KBUILD_EXTMOD guard present in the SHIPPED
+# headers package, which is what DKMS builds against), 0019/0020 (all 25
+# ioctl checks pass against a real udmabuf-exported dma-buf , first time
+# either had ever been exercised).
+#
+# 0023 was on that list and should not have been. Corrected 2026-08-26: the
+# struct_ops type did register, so the "silently never registers" risk noted
+# below did not happen , but register_btf_kfunc_id_set() rejected BOTH kfunc
+# sets with -EINVAL on every boot, WARNing at kernel/bpf/btf.c:9004, because
+# the port carried 6.6.8's BTF_SET8_START (flags 0) where 7.1 wants
+# BTF_KFUNCS_START (flags BTF_SET8_KFUNCS). All eight cache_ext kfuncs were
+# missing from the verifier's table, so any real eviction policy would have
+# been rejected at load while a policy calling none attached happily , which
+# is exactly what the runtime probe was. Fixed in the patch; the probe now
+# calls one kfunc behind a never-taken branch, and
+# tests/test_patch_series.py rejects BTF_SET8_START under patches/custom/.
+#
 ../custom/0001-cachyos-bore-7.1.5.patch
 0002-xanmod-zen-vmscan-swap.patch
 0003-xanmod-zen-vfs-cache.patch
@@ -138,3 +215,32 @@
 # compiles clean against this tree's own .config. See
 # upstream-candidates/outbox/SEND.md for the stable@ backport note.
 ../custom/0022-udmabuf-do-not-create-malformed-scatterlists.patch
+
+# 0023 — NOT ours. Forward-port of cache_ext (Tal Zussman et al., SOSP '25,
+# https://doi.org/10.1145/3731569.3764820, code at
+# github.com/cache-ext/cache_ext, GPL-2.0), from their v6.6.8 kernel fork
+# (github.com/cache-ext/linux-cache-ext) to 7.1.10. Same Track B carry as
+# 0022: their authorship stays, we add no Signed-off-by. Adds an eBPF
+# struct_ops type for pluggable page-cache eviction policies, hooked into
+# mm/vmscan.c's shrink_lruvec(); fully opt-in, inert (page_cache_ext_ops
+# stays NULL) until a BPF program is actually loaded and its cgroup enabled
+# via /proc/page_cache_ext_enabled_cgroup. Real v6.6.8→7.1.10 API drift
+# found and fixed (struct bpf_struct_ops gained .reg/.unreg's bpf_link
+# param plus mandatory .cfi_stubs/.owner; the old BPF_STRUCT_OPS_TYPE()
+# X-macro registration is gone, replaced by an explicit
+# register_bpf_struct_ops() call we had to add ourselves or the type would
+# silently never register; is_callback_calling_kfunc() split into sync/async
+# variants; lruvec unlock helper renamed; bpf_retval_range is s32 not s64;
+# full detail in the patch's own commit message). Verified: every
+# touched/added mm/ and kernel/bpf/ object compiles clean against this
+# tree's real .config — which is not sufficient, and 2026-08-25 proved it:
+# the first build linked 40 duplicate tracepoint symbols into vmlinux.o
+# because mm/readahead.c pulled in <trace/events/filemap.h> with
+# CREATE_TRACE_POINTS still defined. Per-object compiles cannot see that.
+# NOT yet booted or measured against a real workload —
+# that is why this stays a local addition, not something proposed anywhere,
+# until it clears this project's own evidence bar. checkpatch: clean except
+# ~23 pre-existing open-brace-style findings inherited from the upstream
+# research code's own style (cosmetic, left as-is; this patch stays local)
+# and the expected missing Signed-off-by (Track B carry, not ours to add).
+../custom/0023-mm-bpf-cache-ext-page-cache-eviction.patch
