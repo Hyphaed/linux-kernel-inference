@@ -1,0 +1,24 @@
+From 19e5ebe24766c4dec247f7ca6761bc0455e98655 Mon Sep 17 00:00:00 2001
+From: Alexandre Frade <kernel@xanmod.org>
+Date: Thu, 28 Nov 2024 22:55:27 +0000
+Subject: [PATCH] kbuild: Re-add .config file required to sign external modules
+
+Signed-off-by: Alexandre Frade <kernel@xanmod.org>
+---
+ scripts/package/install-extmod-build | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/scripts/package/install-extmod-build b/scripts/package/install-extmod-build
+index f12e1ffe409e..42dcf99347e5 100755
+--- a/scripts/package/install-extmod-build
++++ b/scripts/package/install-extmod-build
+@@ -48,6 +48,9 @@ mkdir -p "${destdir}"
+ 	fi
+ } | tar -c -f - -T - | tar -xf - -C "${destdir}"
+ 
++# copy .config manually to be where it's expected to be
++cp "${KCONFIG_CONFIG}" "${destdir}/.config"
++
+ # When ${CC} and ${HOSTCC} differ, rebuild host programs using ${CC}.
+ #
+ # This caters to host programs that participate in Kbuild. objtool and

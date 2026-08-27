@@ -1,0 +1,474 @@
+From f75343040de7f0a15202e9bd0a6a9cbca4d10fa8 Mon Sep 17 00:00:00 2001
+From: John Johansen <john.johansen@canonical.com>
+Date: Thu, 27 Aug 2026 09:27:27 +0200
+Subject: [PATCH] apparmor: restrict unprivileged user namespace creation
+
+Forward-port of Ubuntu's AppArmor userns-restriction SAUCE from their
+7.0.0-30.30 distro kernel to vanilla 7.2. Extracted by diffing Ubuntu's
+security/apparmor against vanilla v7.0 and taking only the userns hunks --
+Ubuntu's AppArmor fork is ~5200 lines across 25 files, and almost none of
+that is this feature.
+
+Why this is needed at all: hyphaed builds from kernel.org, so it does not
+get Ubuntu's SAUCE. Vanilla already has the mediation *mechanism* --
+the userns_create LSM hook, apparmor_userns_create(),
+aa_profile_ns_perm(),
+AA_USERNS_CREATE and its audit path are all upstream, and the sibling knob
+apparmor_restrict_unprivileged_unconfined was upstreamed too. What never
+went upstream is the switch. So on a stock 7.2 build,
+apparmor_userns_create() returns 0 for any unconfined task, which is
+nearly
+everything on a desktop, and unprivileged user namespaces are
+unrestricted.
+
+The visible symptom is that Ubuntu's own
+/usr/lib/sysctl.d/10-apparmor.conf
+tries to set kernel.apparmor_restrict_unprivileged_userns=1 on every boot
+and fails with "No such file or directory". The invisible one is that the
+machine is less confined than the -generic kernel beside it in GRUB,
+which is not a tradeoff anyone chose.
+
+What this adds:
+
+  - CONFIG_SECURITY_APPARMOR_RESTRICT_USERNS, default y, which seeds
+    aa_unprivileged_userns_restricted.
+  - kernel.apparmor_restrict_unprivileged_userns, plus _force and
+    _complain.
+    The first is mode 0644 with its own handler so an unprivileged
+    reader can see whether the restriction is on -- container runtimes
+    and browsers check it before attempting a userns -- while only a
+    policy admin may write it. The other two stay 0600 as in Ubuntu.
+  - ns_x_to_label(), which resolves a userns transition index to the label
+    to
+    switch to. Deliberately narrower than domain.c's x_to_label(): a
+    userns
+    transition can only be none or a table lookup, so anything else is
+    rejected rather than guessed at.
+  - aa_profile_ns_perm() now returns struct aa_label * instead of int, and
+    apparmor_userns_create() installs the returned label on the new cred.
+
+That last pair is the whole point, and it is why the smaller version of
+this
+patch was rejected. Denying the userns outright would have been about a
+fifth
+the code and would have broken things: Ubuntu's policy ships an
+unprivileged_userns profile (and bwrap-userns-restrict) precisely so that
+an
+unprivileged task gets *confined and allowed* rather than refused. Chrome,
+bwrap, flatpak and podman all depend on that. A deny-only port would look
+like it worked, right up until a sandbox failed to start.
+
+No upstream API drift needed handling. Everything ns_x_to_label() reaches
+for
+already exists in 7.2 -- x_table_lookup() is even already non-static with
+a
+declaration in include/domain.h -- and the only missing piece was the
+ns.target member in the audit union, added here. Compiled clean with W=1.
+
+NOT YET BOOTED, and that matters more than usual for this one. The whole
+mechanism is a mediation path: if the transition is wrong, confinement
+degrades quietly rather than failing loudly. Before trusting it:
+
+  sysctl kernel.apparmor_restrict_unprivileged_userns   # must exist, = 1
+  unshare -Ur true                          # confined, not denied
+  aa-status | grep unprivileged_userns
+  # then actually start chromium, a flatpak, and a podman container
+
+Author is John Johansen, who wrote this in Ubuntu's tree; the forward-port
+is
+ours and adds no Signed-off-by, same carry convention as 0022 and 0023.
+
+Assisted-by: Claude:claude-opus-5
+---
+ security/apparmor/Kconfig          |  12 ++
+ security/apparmor/include/audit.h  |   3 +
+ security/apparmor/include/policy.h |   3 +
+ security/apparmor/include/task.h   |   2 +-
+ security/apparmor/lsm.c            |  68 +++++++++--
+ security/apparmor/policy.c         |   3 +
+ security/apparmor/task.c           | 182 ++++++++++++++++++++++++++---
+ 7 files changed, 246 insertions(+), 27 deletions(-)
+
+diff --git a/security/apparmor/Kconfig b/security/apparmor/Kconfig
+index 1e3bd4464..87e46f293 100644
+--- a/security/apparmor/Kconfig
++++ b/security/apparmor/Kconfig
+@@ -104,6 +104,18 @@ config SECURITY_APPARMOR_PARANOID_LOAD
+ 	  includes policy, and has some form of integrity check.
+ 	  Disabling the check will speed up policy loads.
+ 
++config SECURITY_APPARMOR_RESTRICT_USERNS
++	bool "Restrict user namespace creation to confined domains"
++	depends on SECURITY_APPARMOR && USER_NS
++	default y
++	help
++	  This options allows controlling whether apparmor restricts
++	  the creation of new user namespaces to confined tasks by
++	  default. If set unconfined tasks without CAP_SYS_ADMIN
++	  will not be allowed to create new user namespaces. Confined
++	  tasks ability to create new user namespaces will be controlled
++	  by their profile.
++
+ config SECURITY_APPARMOR_KUNIT_TEST
+ 	tristate "Build KUnit tests for policy_unpack.c" if !KUNIT_ALL_TESTS
+ 	depends on KUNIT && SECURITY_APPARMOR
+diff --git a/security/apparmor/include/audit.h b/security/apparmor/include/audit.h
+index aa00b3440..600e3a520 100644
+--- a/security/apparmor/include/audit.h
++++ b/security/apparmor/include/audit.h
+@@ -147,6 +147,9 @@ struct apparmor_audit_data {
+ 						int addrlen;
+ 					} peer;
+ 				} net;
++				struct {
++					const char *target;
++				} ns;
+ 			};
+ 		};
+ 		struct {
+diff --git a/security/apparmor/include/policy.h b/security/apparmor/include/policy.h
+index 3895f8774..29707173d 100644
+--- a/security/apparmor/include/policy.h
++++ b/security/apparmor/include/policy.h
+@@ -34,6 +34,9 @@
+ struct aa_ns;
+ 
+ extern int unprivileged_userns_apparmor_policy;
++extern int aa_unprivileged_userns_restricted;
++extern int aa_unprivileged_userns_restricted_force;
++extern int aa_unprivileged_userns_restricted_complain;
+ extern int aa_unprivileged_unconfined_restricted;
+ 
+ extern const char *const aa_profile_mode_names[];
+diff --git a/security/apparmor/include/task.h b/security/apparmor/include/task.h
+index b1aaaf60f..96fd53dbd 100644
+--- a/security/apparmor/include/task.h
++++ b/security/apparmor/include/task.h
+@@ -99,7 +99,7 @@ int aa_may_ptrace(const struct cred *tracer_cred, struct aa_label *tracer,
+ 
+ #define AA_USERNS_CREATE	8
+ 
+-int aa_profile_ns_perm(struct aa_profile *profile,
++struct aa_label *aa_profile_ns_perm(struct aa_profile *profile,
+ 		       struct apparmor_audit_data *ad, u32 request);
+ 
+ #endif /* __AA_TASK_H */
+diff --git a/security/apparmor/lsm.c b/security/apparmor/lsm.c
+index 88d12e89d..f1e4c43f1 100644
+--- a/security/apparmor/lsm.c
++++ b/security/apparmor/lsm.c
+@@ -1041,21 +1041,32 @@ static int apparmor_task_kill(struct task_struct *target, struct kernel_siginfo
+ 	return error;
+ }
+ 
+-static int apparmor_userns_create(const struct cred *cred)
++static int apparmor_userns_create(const struct cred *new_cred)
+ {
+ 	struct aa_label *label;
+ 	struct aa_profile *profile;
+ 	int error = 0;
+-	DEFINE_AUDIT_DATA(ad, LSM_AUDIT_DATA_TASK, AA_CLASS_NS,
+-			  OP_USERNS_CREATE);
+-
+-	ad.subj_cred = current_cred();
+ 
+ 	label = begin_current_label_crit_section();
+-	if (!unconfined(label)) {
+-		error = fn_for_each(label, profile,
+-				    aa_profile_ns_perm(profile, &ad,
+-						       AA_USERNS_CREATE));
++	/* remove unprivileged_userns_restricted check when unconfined is updated */
++	if (aa_unprivileged_userns_restricted ||
++	    label_mediates(label, AA_CLASS_NS)) {
++		struct aa_label *new;
++		DEFINE_AUDIT_DATA(ad, LSM_AUDIT_DATA_TASK, AA_CLASS_NS,
++				  OP_USERNS_CREATE);
++		ad.subj_cred = current_cred();
++
++		new = fn_label_build(label, profile, GFP_KERNEL,
++				aa_profile_ns_perm(profile, &ad,
++						   AA_USERNS_CREATE));
++		if (IS_ERR(new)) {
++			error = PTR_ERR(new);
++		} else if (new && cred_label(new_cred) != new) {
++			aa_put_label(cred_label(new_cred));
++			set_cred_label(new_cred, new);
++		} else {
++			aa_put_label(new);
++		}
+ 	}
+ 	end_current_label_crit_section(label);
+ 
+@@ -2321,6 +2332,22 @@ static int __init alloc_buffers(void)
+ }
+ 
+ #ifdef CONFIG_SYSCTL
++/* Unlike apparmor_dointvec(), this permits an unprivileged READ. Userspace
++ * needs to be able to see whether the restriction is on -- container runtimes
++ * and browsers check it to decide whether to even attempt a userns -- while
++ * only a policy admin may change it.
++ */
++static int userns_restrict_dointvec(const struct ctl_table *table, int write,
++				    void *buffer, size_t *lenp, loff_t *ppos)
++{
++	if (!apparmor_enabled)
++		return -EINVAL;
++	if (write && !aa_current_policy_admin_capable(NULL))
++		return -EPERM;
++
++	return proc_dointvec(table, write, buffer, lenp, ppos);
++}
++
+ static int apparmor_dointvec(const struct ctl_table *table, int write,
+ 			     void *buffer, size_t *lenp, loff_t *ppos)
+ {
+@@ -2341,6 +2368,29 @@ static const struct ctl_table apparmor_sysctl_table[] = {
+ 		.mode           = 0600,
+ 		.proc_handler   = apparmor_dointvec,
+ 	},
++#endif /* CONFIG_USER_NS */
++#ifdef CONFIG_USER_NS
++	{
++		.procname       = "apparmor_restrict_unprivileged_userns",
++		.data           = &aa_unprivileged_userns_restricted,
++		.maxlen         = sizeof(int),
++		.mode           = 0644,
++		.proc_handler   = userns_restrict_dointvec,
++	},
++	{
++		.procname       = "apparmor_restrict_unprivileged_userns_force",
++		.data           = &aa_unprivileged_userns_restricted_force,
++		.maxlen         = sizeof(int),
++		.mode           = 0600,
++		.proc_handler   = apparmor_dointvec,
++	},
++	{
++		.procname       = "apparmor_restrict_unprivileged_userns_complain",
++		.data           = &aa_unprivileged_userns_restricted_complain,
++		.maxlen         = sizeof(int),
++		.mode           = 0600,
++		.proc_handler   = apparmor_dointvec,
++	},
+ #endif /* CONFIG_USER_NS */
+ 	{
+ 		.procname       = "apparmor_display_secid_mode",
+diff --git a/security/apparmor/policy.c b/security/apparmor/policy.c
+index 94b4a7e72..7dbb90e65 100644
+--- a/security/apparmor/policy.c
++++ b/security/apparmor/policy.c
+@@ -88,6 +88,9 @@
+ #include "include/resource.h"
+ 
+ int unprivileged_userns_apparmor_policy = 1;
++int aa_unprivileged_userns_restricted = IS_ENABLED(CONFIG_SECURITY_APPARMOR_RESTRICT_USERNS);
++int aa_unprivileged_userns_restricted_force;
++int aa_unprivileged_userns_restricted_complain;
+ int aa_unprivileged_unconfined_restricted;
+ 
+ const char *const aa_profile_mode_names[] = {
+diff --git a/security/apparmor/task.c b/security/apparmor/task.c
+index b9fb37381..b7d0d4985 100644
+--- a/security/apparmor/task.c
++++ b/security/apparmor/task.c
+@@ -335,6 +335,15 @@ static void audit_ns_cb(struct audit_buffer *ab, void *va)
+ 	if (ad->denied & AA_USERNS_CREATE)
+ 		audit_log_format(ab, " denied=\"userns_create\"");
+ 
++	if (ad->peer) {
++		audit_log_format(ab, " target=");
++		aa_label_xaudit(ab, labels_ns(ad->subj_label), ad->peer,
++				FLAG_VIEW_SUBNS, GFP_KERNEL);
++	} else if (ad->ns.target) {
++		audit_log_format(ab, " target=");
++		audit_log_untrustedstring(ab, ad->ns.target);
++	}
++
+ 	buffer = aa_get_buffer(false);
+ 	if (!buffer)
+ 		return; // OOM
+@@ -344,29 +353,168 @@ static void audit_ns_cb(struct audit_buffer *ab, void *va)
+ 	aa_put_buffer(buffer);
+ }
+ 
+-int aa_profile_ns_perm(struct aa_profile *profile,
+-		       struct apparmor_audit_data *ad,
+-		       u32 request)
++/**
++ * ns_x_to_label - resolve a userns transition index to the label to switch to
++ * @profile: profile the transition is being made from
++ * @xindex: transition index from the policy's permission entry
++ * @lookupname: returns the name looked up, for audit
++ * @info: returns a description of what happened, for audit
++ *
++ * Returns: the label to transition to, NULL for "no transition", or an
++ *          ERR_PTR. Caller releases the returned label.
++ *
++ * Lifted from Ubuntu's AppArmor tree. Deliberately narrower than
++ * domain.c's x_to_label(): a userns transition can only be none or a table
++ * lookup, never an exec-style named or fallback transition, so anything
++ * else is rejected rather than guessed at.
++ */
++static struct aa_label *ns_x_to_label(struct aa_profile *profile,
++				      u32 xindex, const char **lookupname,
++				      const char **info)
+ {
++	struct aa_label *new = NULL;
++	u32 xtype = xindex & AA_X_TYPE_MASK;
++	struct aa_label *stack = NULL;
++
++	/* must be none or table */
++	switch (xtype) {
++	case AA_X_NONE:
++		/* default not failure */
++		*lookupname = NULL;
++		return NULL;
++	case AA_X_TABLE:
++		/* released by caller
++		 * if null for both stack and direct want to try fallback
++		 */
++		new = x_table_lookup(profile, xindex, lookupname);
++		if (!new) {
++			*info = "failed to find transition profile";
++			return ERR_PTR(-ENOMEM);
++		}
++		if (**lookupname == '&') {
++			stack = new;
++			new = NULL;
++		}
++		break;
++	default:
++		*info = "invalid profile transition type";
++		return ERR_PTR(-EINVAL);
++	}
++
++	/* stack is true if !new */
++	if (!new) {
++		if (xindex & AA_X_UNCONFINED) {
++			new = aa_get_newest_label(ns_unconfined(profile->ns));
++			*info = "ux fallback";
++		} else {
++			if (xindex & AA_X_INHERIT) {
++				/* (p|c|n)ix - don't change profile but do
++				 * use the newest version
++				 */
++				*info = "ix fallback";
++				/* no profile && no error */
++			} /* else, stack is implicitly against current */
++			new = aa_get_newest_label(&profile->label);
++		}
++	}
++
++	if (stack) {
++		/* base the stack on post domain transition */
++		struct aa_label *base = new;
++
++		new = aa_label_merge(base, stack, GFP_KERNEL);
++		/* null on error */
++		aa_put_label(base);
++		aa_put_label(stack);
++		if (!new)
++			return ERR_PTR(-ENOMEM);
++	}
++
++	/* released by caller */
++	return new;
++}
++
++struct aa_label *aa_profile_ns_perm(struct aa_profile *profile,
++				    struct apparmor_audit_data *ad,
++				    u32 request)
++{
++	struct aa_ruleset *rules = profile->label.rules[0];
++	struct aa_label *new;
+ 	struct aa_perms perms = { };
+-	int error = 0;
++	aa_state_t state;
++	int error;
+ 
+ 	ad->subj_label = &profile->label;
+ 	ad->request = request;
+ 
+-	if (!profile_unconfined(profile)) {
+-		struct aa_ruleset *rules = profile->label.rules[0];
+-		aa_state_t state;
+-
+-		state = RULE_MEDIATES(rules, ad->class);
+-		if (!state)
+-			/* TODO: add flag to complain about unmediated */
+-			return 0;
+-		perms = *aa_lookup_perms(rules->policy, state);
+-		aa_apply_modes_to_perms(profile, &perms);
+-		error = aa_check_perms(profile, &perms, request, ad,
+-				       audit_ns_cb);
++	/* TODO: rework unconfined profile/dfa to mediate user ns, then
++	 * we can drop the unconfined test
++	 */
++	state = RULE_MEDIATES(rules, ad->class);
++	if (!state) {
++		/* TODO: this gets replaced when the default unconfined
++		 * profile dfa gets updated to handle this
++		 */
++		if (profile_unconfined(profile) &&
++		    profile == profiles_ns(profile)->unconfined) {
++			if (!aa_unprivileged_userns_restricted ||
++			    ns_capable_noaudit(current_user_ns(),
++					       CAP_SYS_ADMIN))
++				return aa_get_newest_label(&profile->label);
++			ad->info = "User namespace creation restricted";
++			/* don't just return: allow complain mode to override */
++			/* hardcode unconfined transition for now */
++			new = aa_label_parse(&profile->label,
++					     "unprivileged_userns", GFP_KERNEL,
++					     true, false);
++			if (IS_ERR(new)) {
++				ad->info = "Userns create restricted - failed to find unprivileged_userns profile";
++				ad->error = PTR_ERR(new);
++				ad->ns.target = "unprivileged_userns";
++				new = NULL;
++				perms.deny |= request;
++				goto hard_coded;
++			}
++			ad->info = "Userns create - transitioning profile";
++			perms.audit = request;
++			perms.allow = request;
++			goto hard_coded;
++			/* once there is a real unconfined profile, this can
++			 * use ns_x_to_label() like every other path here
++			 */
++		} else if (!aa_unprivileged_userns_restricted_force) {
++			return aa_get_newest_label(&profile->label);
++		}
++		/* continue to mediation */
++	}
++
++	perms = *aa_lookup_perms(rules->policy, state);
++	new = ns_x_to_label(profile, perms.xindex, &ad->ns.target, &ad->info);
++	if (IS_ERR(new)) {
++		ad->error = PTR_ERR(new);
++		new = NULL;
++		perms.deny |= request;
++	} else if (!new) {
++		/* no transition - not done in x_to_label so we can track */
++		new = aa_get_label(&profile->label);
++	} else {
++hard_coded:
++		ad->peer = new;
++	}
++	if (aa_unprivileged_userns_restricted_complain)
++		perms.complain = ALL_PERMS_MASK;
++
++	aa_apply_modes_to_perms(profile, &perms);
++	error = aa_check_perms(profile, &perms, request, ad, audit_ns_cb);
++	if (error) {
++		aa_put_label(new);
++		return ERR_PTR(error);
++	} else if (!new) {
++		/* would only happen if complain mode changed error,
++		 * which should not happen.
++		 */
++		return ERR_PTR(ad->error);
+ 	}
+ 
+-	return error;
++	return new;
+ }

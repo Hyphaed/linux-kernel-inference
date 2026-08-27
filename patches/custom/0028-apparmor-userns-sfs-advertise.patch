@@ -1,0 +1,49 @@
+From 5671bb6915d200e499575c81915f905d01ec2d0e Mon Sep 17 00:00:00 2001
+From: Ferran Duarri <ferran.duarri@me.com>
+Date: Thu, 27 Aug 2026 15:55:46 +0200
+Subject: [PATCH] apparmor: advertise unconfined userns-restriction support via
+ securityfs
+
+Ubuntu's own apparmor.service checks
+/sys/kernel/security/apparmor/features/policy/unconfined_restrictions/userns
+at every boot (rc.apparmor.functions::check_and_set_userns()) before
+trusting kernel.apparmor_restrict_unprivileged_userns. If that securityfs
+boolean is absent, it concludes the running kernel doesn't support
+unconfined-userns restriction and force-sets the sysctl back to 0, logging
+"disabling unprivileged userns restrictions since unconfined userns is
+not supported / enabled".
+
+0024 (John Johansen's Ubuntu SAUCE, forward-ported) wired the real
+enforcement (apparmor_userns_create(), aa_profile_ns_perm(),
+AA_USERNS_CREATE) but never added this advertisement entry, so Ubuntu's
+own boot script silently undoes the restriction on every boot even though
+the kernel-side mediation works and does not itself depend on this file.
+Found and root-caused on the 7.2.0-hyphaed boot audit, 2026-08-27: sysctl
+read 0 despite 10-apparmor.conf setting 1.
+
+Add "userns" next to the existing "change_profile" boolean in
+aa_sfs_entry_unconfined[], matching the shape apparmor.service already
+expects. Advertisement only -- no enforcement path changes, so this
+carries no behavior change beyond letting the boot script stop overriding
+the sysctl. Compiled clean: security/apparmor/apparmorfs.o.
+
+Not John Johansen's work -- ours, addressing a gap his port left. No
+Signed-off-by (local-only carry, not submitted upstream).
+
+Assisted-by: Claude:claude-opus-5
+---
+ security/apparmor/apparmorfs.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/security/apparmor/apparmorfs.c b/security/apparmor/apparmorfs.c
+index 56155d7d5..5fb39fd1d 100644
+--- a/security/apparmor/apparmorfs.c
++++ b/security/apparmor/apparmorfs.c
+@@ -2460,6 +2460,7 @@ static struct aa_sfs_entry aa_sfs_entry_domain[] = {
+ 
+ static struct aa_sfs_entry aa_sfs_entry_unconfined[] = {
+ 	AA_SFS_FILE_BOOLEAN("change_profile", 1),
++	AA_SFS_FILE_BOOLEAN("userns", 1),
+ 	{ }
+ };
+ 

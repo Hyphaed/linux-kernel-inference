@@ -1,0 +1,28 @@
+From: Arjan van de Ven <arjan@linux.intel.com>
+Date: Mon, 01 Jan 2024 00:00:00 +0000
+Subject: [PATCH] pci: Set PME_TIMEOUT to 4000ms to reduce spurious wakeups
+
+Clear Linux optimization: poll PME events every 4 seconds instead of 1.
+Reduces unnecessary system wakeups on boards where PCIe PME polling can
+trigger spuriously and prevent deep CPU C-states.
+
+Sourced from linux-tkg clear-patches (Arjan van de Ven / Clear Linux).
+
+Forward-Port-Notes: drivers/pci/pci.c
+---
+ drivers/pci/pci.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 1111111..2222222 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -63,7 +63,7 @@ struct pci_pme_device {
+ 	struct pci_dev *dev;
+ };
+
+-#define PME_TIMEOUT 1000 /* How long between PME checks */
++#define PME_TIMEOUT 4000 /* How long between PME checks */
+
+ /*
+  * Following exit from Conventional Reset, devices must be ready within 1 sec

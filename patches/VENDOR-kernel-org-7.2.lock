@@ -1,0 +1,77 @@
+# Pinned sources for patches/kernel-org-7.2/series.
+# Same format as patches/VENDOR-kernel-org-7.1.lock: name, origin, sha256, kind.
+#
+# Generated 2026-08-27 from local clones at:
+#   github/kernelorg/linux @ v7.2 (8d3ae59288f1, released 2026-08-16)
+#   linux                  @ origin/7.2 (Linux 7.2.0-xanmod1, 275555fa1bf1)
+#   kernel-patches         @ master (7.2/sched/0001-bore.patch present natively)
+#
+# sha256 values are the patch FILE hashes as committed under
+# patches/kernel-org-7.2/ and patches/custom/, not the upstream commit —
+# several entries are local-file, not git-commit.
+#
+# VERIFIED 2026-08-27, and this is the real gate, not `patches/eval.py`:
+# a sequential `git am --3way` of all 22 entries in series order against a
+# fresh v7.2 tree (build/linux-7.2, tag base-7.2.0) applied every one with
+# zero conflicts.
+#
+# eval.py disagreed, and was wrong in the way it is documented to be wrong.
+# It reported 21 CLEAN / 1 CONFLICT, flagging 0023 with "repository lacks the
+# necessary blob to perform 3-way merge". That is eval's per-patch check
+# testing 0023 against a *clean* tree it was never meant to apply to. The
+# genuine problem was different and smaller — see the 0023 entry.
+#
+# Two entries changed KIND at 7.2, both in the good direction:
+#   0001 BORE  — was a hand forward-port (0001-cachyos-bore-7.1.5.patch);
+#                CachyOS now publishes a native 7.2 BORE.
+#   0018 ACS   — was a hand-regenerated 2018 TKG file; XanMod carries the
+#                same Mark Weiman patch maintained against 7.2, so it is now
+#                a git-commit pin.
+#
+# Three entries are NEW at 7.2 (0025, 0026, 0027) — the reasoning for taking
+# them, and for rejecting a dozen others, is in patches/kernel-org-7.2/series.
+
+# ─── entries ─────────────────────────────────────────────────────────────────
+../custom/0001-cachyos-bore-7.2.patch                          file://$KI_ROOT/patches/custom/0001-cachyos-bore-7.2.patch                          61b9543e400d6fb38a68ee2276538ae14834bec75d7b06d3e1ac9977174ff619  local-file
+0002-xanmod-zen-vmscan-swap.patch                              git+file://$KI_ROOT/linux@5b4df09b709a                                              436757f151b1b8b08277ebba1bebb68e4dfb6d81e2a0c74d6084064bf25cf51c  git-commit
+0003-xanmod-zen-vfs-cache.patch                                git+file://$KI_ROOT/linux@7ac91c5588e7                                              af1a0b1c26a3007dfa6a30853cb958350a311ac4d5d4b94248f5feb2d83deff9  git-commit
+0004-xanmod-zen-max-map-count.patch                            git+file://$KI_ROOT/linux@ed2a9eca2135                                              096e4f345903c7e7b3b75a7c1d868b2a491469a47163f71ec091a98ca4f314b4  git-commit
+0005-xanmod-zen-500hz-timer.patch                              git+file://$KI_ROOT/linux@0988dbc5822a                                              c6c524cbdec8adc786f726a412975aa9af895fcfbd8e5aad26a25487e95c9167  git-commit
+0006-xanmod-zen-dm-crypt-wq.patch                              git+file://$KI_ROOT/linux@9c594ca6d407                                              edcc449b52067d73398f227e44f0a583053ca9735e55ef111ac72c25d40c9732  git-commit
+0007-xanmod-zen-evdev-rcu.patch                                git+file://$KI_ROOT/linux@c1f19aa98e54                                              4d280461883bdeac22e8b14c727f872d0d328bd7e74b0f16a8ce776e64658557  git-commit
+0008-xanmod-blk-wbt-latency.patch                              git+file://$KI_ROOT/linux@89d0ae046966                                              c26f45a04ec9935aa212da0c078a3ef058025dd020dc9d9994f4acb04d14f37d  git-commit
+0009-xanmod-blk-rq-affinity.patch                              git+file://$KI_ROOT/linux@bae2948f36c9                                              fe1f8d97b7dcff84b66f0e750b4f9375a9440982add6eee23e66c16a879a3df3  git-commit
+0010-xanmod-mq-deadline-front-merge.patch                      git+file://$KI_ROOT/linux@fd699380cd6a                                              2b81c7b62e2c225060515c5f5f7f71de2a88f6248be093648b92a4def1b9c429  git-commit
+0011-xanmod-mq-deadline-write-prio.patch                       git+file://$KI_ROOT/linux@3868ed8dbd88                                              53cdba9c08367293e8bdf25ea86c009af92159fc79cb4e931a533fcfa378f2a2  git-commit
+0012-tkg-pci-pme-timeout.patch                                 file://$KI_ROOT/patches/custom/0014-tkg-pci-pme-timeout.patch                       96b7670e0d5bcf01ff2333a743e86f340638390d6ad8966368e64ec323b08beb  local-file
+0013-nvme-lower-default-apst-latency.patch                     file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch           50c1f5777237cdc0de68eeeb2d39b7af9b38340461bf8cfeb8e90c915254dd99  local-file
+0014-mm-thp-defrag-defer-madvise-default.patch                 file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch       526a9e594d94a24ffabf237219eb2f3c94c82654153c6c4edf7c82e035215a17  local-file
+0015-kbuild-ubsan-extmod-opt-in.patch                          file://$KI_ROOT/patches/kernel-org-7.2/0015-kbuild-ubsan-extmod-opt-in.patch        3ba3cd7d30dd44abf8807c96de5273c4a632b65d9591c9e87feb602d4b0a07fa  local-file
+0018-xanmod-pci-acs-override.patch                             git+file://$KI_ROOT/linux@84598b0cf5c4                                              f92f931ded3103ad94b9f2a4a5f2a6cc7f4ce6f901c3fd89f2081db6b407267a  git-commit
+../custom/0019-dma-buf-priority-hint.patch                     file://$KI_ROOT/patches/custom/0019-dma-buf-priority-hint.patch                     3bf3af3be9110b78a54a9862688aa4e67bfe18a1156646871797d9251397060a  local-file
+../custom/0020-dma-buf-compressed-descriptor.patch             file://$KI_ROOT/patches/custom/0020-dma-buf-compressed-descriptor.patch             e6ea5aab805cad36d1ac50d68ade25c72a513e19d6fa6bb2426a75d62d074935  local-file
+0025-xanmod-mm-workingset-protection.patch                     git+file://$KI_ROOT/linux@80af49bc67fa                                              717bdb76bbff976603d54112b6efbd9fc728ac5f4588b2255868c6f0961d1dfa  git-commit
+0026-xanmod-kbuild-extmod-sign-config.patch                    git+file://$KI_ROOT/linux@19e5ebe24766                                              3016c3f798ec0b0e587c695fc5ac253075492db315e2d014a0df9b6fa14e5758  git-commit
+0027-xanmod-kbuild-deb-dbg-optin.patch                         git+file://$KI_ROOT/linux@c9d752c21d51                                              3ca940b1080248bc91c7e806a77550e106afa696373440c85f05ebf207259610  git-commit
+../custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch  file://$KI_ROOT/patches/custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch  0a6400da01aaf0b068c6031fdffa9a3c569477a9361f58378f970ec3025ebc18  local-file
+../custom/0024-apparmor-restrict-unprivileged-userns.patch     file://$KI_ROOT/patches/custom/0024-apparmor-restrict-unprivileged-userns.patch     07b7f7be849ef8faf6dbbf87f576837c08961d74614dd33a98d89e32660761ec  local-file
+
+# ─── 0023 note ───────────────────────────────────────────────────────────────
+# Re-anchored by hand for 7.2 and re-pinned as
+# ../custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch. The 7.1.10
+# file is kept alongside it, unchanged, so the two ports stay comparable.
+#
+# The whole 7.1.10 -> 7.2 delta was two include blocks drifting underneath the
+# patch: kernel/bpf/verifier.c gained <linux/cnum.h> and mm/memcontrol.c
+# gained "swap_table.h", both inside this patch's three-line context. No
+# semantic change was needed. `git am --3way` failed blaming
+# include/linux/btf_ids.h — the FIRST file in the patch, not either real site,
+# the same misleading report the 7.1.5 BORE port produced. `git apply --check
+# -v` named kernel/bpf/verifier.c:28 correctly, which is why gitops.apply_series
+# runs it on failure.
+#
+# Re-checked after porting, because this is the patch that shipped broken once:
+# both kfunc sets still use BTF_KFUNCS_START/END, and 7.2's
+# register_btf_kfunc_id_set() still rejects a set without BTF_SET8_KFUNCS
+# (kernel/bpf/btf.c:9190; it was :9004 on 7.1). Still correct, still required.
+../custom/0028-apparmor-userns-sfs-advertise.patch          file://$KI_ROOT/patches/custom/0028-apparmor-userns-sfs-advertise.patch          0987cedfa96b6932d9c5df3766e0dc04094c74c997850bb5fb834ada17822ecc  local-file

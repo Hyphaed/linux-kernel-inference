@@ -1,0 +1,2541 @@
+From 2b82c3e2b3f3ef98d00088a777b1a3d6e282250e Mon Sep 17 00:00:00 2001
+From: Tal Zussman <tz2294@columbia.edu>
+Date: Tue, 25 Aug 2026 14:16:44 +0200
+Subject: [PATCH] mm, bpf: forward-port cache_ext (customizable page-cache
+ eviction via eBPF)
+
+Forward-ports cache_ext, a framework for pluggable Linux page-cache
+eviction policies implemented as eBPF struct_ops programs. Adds a new
+struct_ops type (page_cache_ext_ops: init/evict_folios/folio_added/
+folio_accessed/folio_evicted), a per-memcg valid-folios tracking set
+and a small data-structure registry (indexed lists) that eBPF eviction
+policies use to rank and select folios, and hooks the eviction path in
+mm/vmscan.c's shrink_lruvec() so a loaded policy gets first refusal on
+the inactive file LRU before the kernel's own reclaim logic runs. Fully
+opt-in and inert until an eBPF program is actually loaded and its owning
+cgroup enabled via /proc/page_cache_ext_enabled_cgroup: with no policy
+loaded, page_cache_ext_ops stays NULL and every hook is a no-op read of
+that pointer, so it changes nothing for a system that doesn't use it.
+
+Original design and implementation: Tal Zussman, Ioannis Zarkadas,
+Jeremy Carin, Andrew Cheng, Hubertus Franke, Jonas Pfefferle, Asaf
+Cidon. "cache_ext: Customizing the Page Cache with eBPF", SOSP '25.
+https://doi.org/10.1145/3731569.3764820
+https://github.com/cache-ext/cache_ext (GPL-2.0, artifact-evaluated)
+Forward-ported from their v6.6.8 kernel fork
+(https://github.com/cache-ext/linux-cache-ext) to v7.1.10. The upstream
+repo's new files carried no SPDX tag; added GPL-2.0 here to match the
+tree they now live in.
+
+Forward-Port-Notes: mm/filemap.c, kernel/trace/bpf_trace.c,
+ include/linux/{hashtable,btf_ids}.h applied unchanged (git apply --check
+ clean against v7.1.10 as-is).
+
+ Real v6.6.8 -> v7.1.10 API drift found and fixed, none of it cosmetic:
+ - struct bpf_struct_ops: .reg/.unreg gained a `struct bpf_link *link`
+   parameter (compare kernel/sched/ext.c's bpf_scx_reg/bpf_scx_unreg);
+   .cfi_stubs is now load-bearing, not optional -- omitting it makes
+   bpf_struct_ops_desc_init() return -EINVAL at registration time with
+   only a pr_warn to say why. Added __bpf_ops_page_cache_ext_ops, a
+   static instance of struct page_cache_ext_ops populated with trivial
+   stub functions (never called; only their addresses are read), same
+   pattern as kernel/sched/ext.c's __bpf_ops_sched_ext_ops. Added
+   .owner = THIS_MODULE, also now required.
+ - kernel/bpf/bpf_struct_ops_types.h and its BPF_STRUCT_OPS_TYPE(...)
+   X-macro registration list are gone entirely on this kernel, replaced
+   by an explicit register_bpf_struct_ops(&ops, type) call per subsystem
+   (see net/ipv4/bpf_tcp_ca.c's bpf_tcp_ca_kfunc_init). Nothing else
+   ever called this for page_cache_ext_ops -- added
+   bpf_page_cache_ext_kfunc_init() as a late_initcall in
+   mm/page_cache_ext.c. Without it the type builds fine and silently
+   never becomes available to any BPF program; there is no error at
+   build or load time pointing at a missing X-macro entry that no
+   longer exists to be missing from.
+ - bpf_base_func_proto() gained a `const struct bpf_prog *prog` second
+   argument.
+ - mm/vmscan.c: lruvec locking helper renamed unlock_page_lruvec_irq()
+   -> lruvec_unlock_irq().
+ - kernel/bpf/verifier.c: the old is_callback_calling_kfunc() single
+   function was split into is_sync_callback_calling_kfunc() /
+   is_async_callback_calling_kfunc(); cache_ext's two new
+   callback-calling kfuncs (list iterate/sample) are sync, so they're
+   wired into is_sync_callback_calling_kfunc() alongside
+   is_bpf_rbtree_add_kfunc(), not the now-gone original function. The
+   callback-state-setter dispatch site similarly moved from
+   __check_func_call() to push_callback_call(). struct
+   bpf_retval_range's minval/maxval are s32 (bpf_verifier.h), not s64 --
+   the sample callback's tracked return range is retval_range(S32_MIN,
+   S32_MAX) rather than the wider range the original targeted; the real
+   eBPF calling convention is unaffected (r0 is always 64-bit), only the
+   verifier's static range-tracking precision for this one callback.
+ - include/linux/mm_types.h, include/linux/memcontrol.h: pure struct
+   additions re-anchored past two years of unrelated struct-layout
+   churn (mem_cgroup_per_node's cacheline-padding restructure, the
+   CONFIG_MEMCG_V1 split into memcontrol-v1.c, struct mem_cgroup's
+   nodeinfo[] flexible-array-member requiring the new bool field to sit
+   immediately before it, not after).
+ - mm/readahead.c: the new prefetch tracepoint's #include goes after
+   <trace/events/readahead.h>, with CREATE_TRACE_POINTS undefined again
+   first -- the same shape mm/memcontrol.c already uses to pull in
+   vmscan.h after defining memcg.h's tracepoints. define_trace.h clears
+   CREATE_TRACE_POINTS only for its own recursive re-read and restores
+   it before it returns, so leaving it set makes readahead.o emit a
+   second copy of every tracepoint in filemap.h, not just the new one.
+   Each object still compiles clean on its own; vmlinux.o is where it
+   shows up, as 40 duplicate symbols against mm/filemap.o. Moving the
+   #include above the CREATE_TRACE_POINTS block instead does not work
+   either -- that breaks the block's own macro expansion
+   (STATIC_CALL_TRAMP/check_trace_callback_type undeclared errors).
+ - Dropped, deliberately: the legacy cgroup-v1 page_tracking.nr_entries
+   cftype entry (that whole interface split out to mm/memcontrol-v1.c;
+   the cgroup-v2 default equivalent is kept) and one unconditional
+   pr_info_ratelimited() the upstream diff added to the verifier's
+   backtracking hot path with no apparent connection to cache_ext's own
+   feature -- looked like incidental dev-branch noise, not a
+   correctness or feature requirement.
+ - Removed mm/page_cache_ext_ds.h: shipped empty (0 bytes) in upstream
+   and #include'd by nothing; the declarations it once presumably held
+   live in include/linux/cache_ext.h instead.
+
+ Verified: every touched/added object (mm/{filemap,memcontrol,readahead,
+ swap,vmscan,page_cache_ext,page_cache_ext_ds}.o,
+ kernel/bpf/verifier.o, kernel/trace/bpf_trace.o) compiles clean against
+ this tree's real .config. Not yet booted; no eviction policy loaded or
+ measured against a real workload on this hardware -- both are follow-up
+ work before this leaves the "compiles" stage of evidence, per this
+ project's own standing rule that a patch needs a real before/after
+ measurement, not a compile, to be considered proven.
+
+Assisted-by: Claude:claude-sonnet-5
+
+Follow-up fix (found by a real build, not review): the original port put
+struct cache_ext_ds_registry (which embeds a DECLARE_HASHTABLE) directly
+into struct mem_cgroup_per_node, and put valid_folios_set/valid_folio's
+full definitions plus #include <linux/hashtable.h> straight into
+include/linux/memcontrol.h. That header is transitively included by close
+to the whole kernel (security.h -> bpf.h -> memcontrol.h reaches
+kernel/trace/ftrace.c, among many others), so hashtable.h's hash_add()
+macro became visible in every one of those translation units -- including
+kernel/trace/ftrace.c, which has its own unrelated static hash_add()
+function. Real build failure: "macro 'hash_add' requires 3 arguments, but
+only 2 given" at kernel/trace/ftrace.c:6312, caught only because a full
+make bindeb-pkg got to 34000/34000 objects before hitting it -- an
+object-level compile of just the touched files never would have.
+
+Fixed at the root, not by renaming ftrace.c's unrelated static function:
+moved the full struct valid_folios_set/valid_folio definitions into
+include/linux/cache_ext.h (which already needs hashtable.h for its own
+cache_ext_ds_registry), changed mem_cgroup_per_node's
+cache_ext_ds_registry field from embedded-by-value to a pointer (matching
+how valid_folios_set was already a pointer), and left memcontrol.h with
+plain forward declarations. memcontrol.c and page_cache_ext.c each gained
+their own direct #include <linux/cache_ext.h> where they actually
+dereference these types; ftrace.c and the rest of the kernel no longer see
+hashtable.h through memcontrol.h at all. Re-verified: every touched
+object recompiles clean, including kernel/trace/ftrace.o, and the full
+20-patch series still re-applies via a real sequential git am --3way
+against a fresh base-7.1.10 worktree with zero conflicts.
+
+Second follow-up fix (found by booting it, which is the only thing that
+could have found it): the port kept upstream's BTF_SET8_START/END around
+both kfunc sets in mm/page_cache_ext_ds.c. On v6.6.8 that was the kfunc
+macro. It is not one any more. include/linux/btf_ids.h now defines
+BTF_SET8_START(name) as __BTF_SET8_START(name, local, 0) -- flags zero --
+and BTF_KFUNCS_START(name) as __BTF_SET8_START(name, local,
+BTF_SET8_KFUNCS). register_btf_kfunc_id_set() rejects a set without that
+flag:
+
+	if (!(kset->set->flags & BTF_SET8_KFUNCS)) {
+		WARN_ON(!kset->owner);
+		return -EINVAL;
+	}
+
+so every boot of the ported kernel threw a WARNING at
+kernel/bpf/btf.c:9004 out of register_cache_ext_kfuncs() and then
+"cache_ext: failed to register kfunc sets (-22)". kset->owner is
+THIS_MODULE, NULL for built-in code, which is what turns the -EINVAL into
+a splat as well. All eight cache_ext kfuncs were absent from the
+verifier's kfunc table, so the struct_ops type registered and attached
+fine while any policy that actually called a kfunc would have been
+rejected at load. Switched both sets to BTF_KFUNCS_START/END, which is
+what all ~40 in-tree kfunc sites use.
+
+Nothing else needed changing: __bpf_kfunc is only __used __retain
+__noclone noinline (include/linux/btf.h), with no BTF decl-tag
+dependency, and btf_check_kfunc_protos() wants FUNC -> FUNC_PROTO in
+vmlinux BTF, which those attributes already guarantee.
+
+Worth recording why this survived a verification pass: the runtime test
+checked that /proc/page_cache_ext_enabled_cgroup existed and that
+bpf_struct_ops_page_cache_ext_ops and its ops were in vmlinux BTF. Both
+were true. The BPF probe it loaded called no cache_ext kfunc at all, so
+the one broken thing was the one thing not exercised.
+
+Forward-Port-Notes: 7.1.10 -> 7.2, 2026-08-27. Re-anchored only; no
+    semantic change. Two include blocks drifted underneath the patch:
+    kernel/bpf/verifier.c gained <linux/cnum.h> between <linux/cpumask.h>
+    and <linux/bpf_mem_alloc.h>, and mm/memcontrol.c gained "swap_table.h"
+    after "internal.h". Both sat inside this patch's three-line context, so
+    `git am --3way` failed and blamed include/linux/btf_ids.h, the first
+    file in the patch, rather than either real site -- the same misleading
+    first-file report seen on the 7.1.5 BORE port. `git apply --check -v`
+    named kernel/bpf/verifier.c:28 correctly.
+
+    Re-verified after the port, because this is the patch that shipped
+    broken once: both kfunc sets still use BTF_KFUNCS_START/END, and 7.2's
+    register_btf_kfunc_id_set() still rejects a set without BTF_SET8_KFUNCS
+    (kernel/bpf/btf.c:9190, was :9004 on 7.1). The fix is still both correct
+    and still required.
+
+    7.2 removed strncpy() outright -- 7.1.10 declares it at
+    include/linux/string.h:71, 7.2 names it only in comments as the thing to
+    replace. The one use here becomes strscpy(), which is both the kernel's
+    documented replacement and strictly safer: the reader does
+    strlen(page_cache_ext_enabled_cgroup.path), so it depends on NUL
+    termination, and that is exactly what strncpy() does NOT guarantee when
+    the source fills the buffer. strscpy() always terminates. It does not
+    zero-pad the rest of the PATH_MAX buffer, and nothing reads past the NUL.
+
+    Found by a real , not by inspection: the earlier check on
+    this port confirmed it applied and that security/apparmor objects built,
+    and mm/memcontrol.o was never compiled. All nine objects this patch
+    touches now build clean.
+
+    STILL UNPROVEN, exactly as on 7.1.10: whether the call sites in
+    mm/filemap.c and mm/vmscan.c actually fire. A registered struct_ops
+    whose hooks never run looks identical from userspace. A clean apply on
+    7.2 is not evidence either way.
+---
+ include/linux/btf_ids.h        |   3 +-
+ include/linux/cache_ext.h      | 135 ++++++
+ include/linux/hashtable.h      |   3 +
+ include/linux/memcontrol.h     |  53 +++
+ include/linux/mm_types.h       |  27 ++
+ include/trace/events/filemap.h |   5 +
+ kernel/bpf/verifier.c          |  90 +++-
+ kernel/trace/bpf_trace.c       |   1 +
+ mm/Makefile                    |   3 +-
+ mm/filemap.c                   |  28 +-
+ mm/memcontrol.c                | 434 ++++++++++++++++++
+ mm/page_cache_ext.c            | 200 +++++++++
+ mm/page_cache_ext.h            |   8 +
+ mm/page_cache_ext_ds.c         | 772 +++++++++++++++++++++++++++++++++
+ mm/readahead.c                 |   7 +
+ mm/swap.c                      |   8 +
+ mm/vmscan.c                    | 177 +++++++-
+ 17 files changed, 1946 insertions(+), 8 deletions(-)
+ create mode 100644 include/linux/cache_ext.h
+ create mode 100644 mm/page_cache_ext.c
+ create mode 100644 mm/page_cache_ext.h
+ create mode 100644 mm/page_cache_ext_ds.c
+
+diff --git a/include/linux/btf_ids.h b/include/linux/btf_ids.h
+index 8b5a9ee92..7c9f9de1e 100644
+--- a/include/linux/btf_ids.h
++++ b/include/linux/btf_ids.h
+@@ -270,7 +270,8 @@ extern u32 btf_sock_ids[];
+ #define BTF_TRACING_TYPE_xxx	\
+ 	BTF_TRACING_TYPE(BTF_TRACING_TYPE_TASK, task_struct)	\
+ 	BTF_TRACING_TYPE(BTF_TRACING_TYPE_FILE, file)		\
+-	BTF_TRACING_TYPE(BTF_TRACING_TYPE_VMA, vm_area_struct)
++	BTF_TRACING_TYPE(BTF_TRACING_TYPE_VMA, vm_area_struct) \
++	BTF_TRACING_TYPE(BTF_TRACING_TYPE_CACHE_EXT_LIST_NODE, cache_ext_list_node)
+ 
+ enum {
+ #define BTF_TRACING_TYPE(name, type) name,
+diff --git a/include/linux/cache_ext.h b/include/linux/cache_ext.h
+new file mode 100644
+index 000000000..c365d81fb
+--- /dev/null
++++ b/include/linux/cache_ext.h
+@@ -0,0 +1,135 @@
++// SPDX-License-Identifier: GPL-2.0
++#ifndef _LINUX_CACHE_EXT_H
++#define _LINUX_CACHE_EXT_H 1
++
++/*
++ * BPF-Exposed data structures for page_cache_ext.
++ */
++
++#include <linux/list.h>
++#include <linux/hashtable.h>
++#include <linux/spinlock.h>
++#include <linux/slab.h>
++// #include <linux/bpf.h>
++
++typedef u64 (*bpf_callback_t)(u64, u64, u64, u64, u64);
++
++bool cache_ext_is_callback_calling_kfunc_iterate(u32 btf_id);
++bool cache_ext_is_callback_calling_kfunc_sample(u32 btf_id);
++
++/******************************************************************************
++ * Linked List ****************************************************************
++ *****************************************************************************/
++
++/*
++ * Indexed Linked List.
++ *
++ * This is a linked list that is indexed by the folio it contains. This is
++ * because we need to be able to quickly:
++ * - Find the folio corresponding to a given node.
++ * - Find the node corresponding to a given folio.
++ *
++ * Instead of maintaining a hash-table per list, we can piggyback on the valid
++ * folios hashtable we already maintain. It will also keep a pointer to the node
++ * in the valid_folio struct.
++ */
++struct cache_ext_list {
++	struct list_head head;
++	// This is for the ds registry.
++	struct hlist_node h_node;
++};
++
++struct cache_ext_list_node {
++	struct folio *folio;
++
++	struct list_head node;
++};
++
++/*
++ * valid_folios is a set of valid folio counters in the system. It's used to
++ * validate untrusted page references. Moved here (out of memcontrol.h,
++ * where the upstream cache_ext design originally put it) because these
++ * DECLARE_HASHTABLE()-bearing structs need <linux/hashtable.h>, and
++ * memcontrol.h is transitively included by nearly the whole kernel -- see
++ * the forward-declaration comment in memcontrol.h for why that matters.
++ *
++ * Key: Pointer interpreted as a number.
++ * Value: Nothing, we just want to check for existence.
++ */
++
++// Support up to 20 GiB of memory
++// Each bucket represents 4KiB of memory.
++#define VALID_FOLIOS_SET_SIZE_POW 23
++#define VALID_FOLIOS_SET_SIZE (1 << VALID_FOLIOS_SET_SIZE_POW)
++
++struct valid_folios_set {
++	DECLARE_HASHTABLE(valid_folios, VALID_FOLIOS_SET_SIZE_POW);
++	spinlock_t bucket_locks[VALID_FOLIOS_SET_SIZE];
++	atomic64_t nr_entries;
++};
++
++struct valid_folio {
++	struct hlist_node h_node;
++	uintptr_t folio_ptr;
++	struct cache_ext_list_node *cache_ext_node;
++};
++
++/*
++ * BPF API
++ */
++
++struct sampling_options {
++	__u32 sample_size;
++	__u32 select_size;
++};
++
++int bpf_cache_ext_list_add(u64 list, struct folio *folio);
++int bpf_cache_ext_list_add_tail(u64 list, struct folio *folio);
++int bpf_cache_ext_list_move(u64 list, struct folio *folio, bool tail);
++int bpf_cache_ext_list_del(struct folio *folio);
++int bpf_cache_ext_list_iterate(struct mem_cgroup *memcg, u64 list,
++			       int(iter_fn)(int idx,
++					    struct cache_ext_list_node *node),
++			       struct page_cache_ext_eviction_ctx *ctx);
++int bpf_cache_ext_list_sample(struct mem_cgroup *memcg, u64 list,
++			      s64(score_fn)(struct cache_ext_list_node *a),
++				  struct sampling_options *opts,
++				  struct page_cache_ext_eviction_ctx *ctx);
++u64 bpf_cache_ext_ds_registry_new_list(struct mem_cgroup *memcg);
++
++/*
++ * Used by the valid_folios_set code
++ */
++struct cache_ext_list_node *cache_ext_list_node_alloc(struct folio *folio);
++void cache_ext_list_node_free(struct cache_ext_list_node *node);
++
++/*
++ * page_cache_ext data structure registry.
++ */
++
++#define CACHE_EXT_REGISTRY_MAX_ENTRIES 5
++
++// NOTE: For now, tie the registry lifetime to the struct_ops lifetime.
++// Release all the data structures when the struct_ops is released.
++// Do not permit any structure to be released while the struct_ops is
++// still in use.
++struct cache_ext_ds_registry {
++	DECLARE_HASHTABLE(ds_hash, 5);
++	rwlock_t lock;
++	int nr_entries;
++};
++
++void cache_ext_ds_registry_init(struct cache_ext_ds_registry *registry);
++void cache_ext_ds_registry_read_lock(struct folio *folio);
++void cache_ext_ds_registry_read_unlock(struct folio *folio);
++void cache_ext_ds_registry_write_lock(struct folio *folio);
++void cache_ext_ds_registry_write_unlock(struct folio *folio);
++void cache_ext_ds_registry_del_all(struct mem_cgroup *memcg);
++struct cache_ext_list *cache_ext_ds_registry_new_list(struct mem_cgroup *memcg);
++struct cache_ext_list *
++cache_ext_ds_registry_get(struct cache_ext_ds_registry *registry, u64 list_ptr);
++struct cache_ext_ds_registry *
++cache_ext_ds_registry_from_folio(struct folio *folio);
++struct cache_ext_ds_registry *
++cache_ext_ds_registry_from_memcg(struct mem_cgroup *memcg);
++#endif // _LINUX_CACHE_EXT_H
+diff --git a/include/linux/hashtable.h b/include/linux/hashtable.h
+index f6c666730..30ce1ddd8 100644
+--- a/include/linux/hashtable.h
++++ b/include/linux/hashtable.h
+@@ -51,6 +51,9 @@ static inline void __hash_init(struct hlist_head *ht, unsigned int sz)
+  */
+ #define hash_init(hashtable) __hash_init(hashtable, HASH_SIZE(hashtable))
+ 
++#define hash_bucket_idx(hashtable, key)                          \
++	hash_min(key, HASH_BITS(hashtable))
++
+ /**
+  * hash_add - add an object to a hashtable
+  * @hashtable: hashtable to add to
+diff --git a/include/linux/memcontrol.h b/include/linux/memcontrol.h
+index 8170bb806..4e64e5a86 100644
+--- a/include/linux/memcontrol.h
++++ b/include/linux/memcontrol.h
+@@ -64,6 +64,54 @@ struct mem_cgroup_reclaim_cookie {
+ 
+ #ifdef CONFIG_MEMCG
+ 
++/*
++ * Page cache ext.
++ */
++
++ bool page_cache_ext_cgroup_enabled(struct cgroup *cgroup);
++
++
++/*
++ * valid_folios is a set of valid folio counters in the system. It's used to
++ * validate untrusted page references.
++ *
++ * Key: Pointer interpreted as a number.
++ * Value: Nothing, we just want to check for existence.
++ *
++ * Full definitions of struct valid_folios_set / struct valid_folio (and
++ * struct cache_ext_ds_registry, below) live in include/linux/cache_ext.h,
++ * not here: they embed a DECLARE_HASHTABLE() field, and this header
++ * (memcontrol.h) is transitively included by close to the entire kernel
++ * (e.g. via security.h -> bpf.h -> memcontrol.h -> kernel/trace/ftrace.c).
++ * Pulling <linux/hashtable.h>'s hash_add()/hash_del()/etc. macros into that
++ * blast radius broke kernel/trace/ftrace.c's own unrelated static
++ * hash_add() the first time this was tried (verified via a real build:
++ * "macro 'hash_add' requires 3 arguments, but only 2 given" at
++ * kernel/trace/ftrace.c:6312). Every reference to these types below this
++ * point is by pointer, so a forward declaration is all this header needs.
++ */
++struct valid_folios_set;
++struct valid_folio;
++struct cache_ext_ds_registry;
++
++// Function definitions for the valid_folios_set
++struct valid_folios_set* init_valid_folios_set(int node, uint64_t num_buckets);
++void free_valid_folios_set(struct valid_folios_set *valid_folios_set);
++void valid_folios_add(struct folio *folio);
++void valid_folios_del(struct folio *folio);
++bool valid_folios_exists(struct valid_folios_set *valid_folios_set, struct folio *folio);
++bool valid_folios_exists_unlocked(struct valid_folios_set *valid_folios_set, struct folio *folio);
++struct valid_folios_set * lruvec_to_valid_folios_set(struct lruvec *lruvec);
++struct page_cache_ext_ops *get_page_cache_ext_ops(struct mem_cgroup *memcg);
++struct valid_folio *valid_folios_lookup(struct folio *folio);
++struct valid_folios_set *folio_to_valid_folios_set(struct folio *folio);
++spinlock_t *valid_folios_set_get_bucket_lock(struct valid_folios_set *valid_folios_set, struct folio *folio);
++void valid_folios_clear_list(struct valid_folios_set *valid_folios_set);
++inline struct valid_folios_set *memcg_to_valid_folios_set(struct mem_cgroup *memcg);
++
++// Misc for cache_ext
++struct mem_cgroup *page_cache_ext_get_enabled_memcg(void);
++
+ #define MEM_CGROUP_ID_SHIFT	16
+ 
+ struct mem_cgroup_private_id {
+@@ -131,6 +179,9 @@ struct mem_cgroup_per_node {
+ 	atomic_t		slab_reclaimable;
+ 	atomic_t		slab_unreclaimable;
+ #endif
++
++	struct valid_folios_set *valid_folios_set;
++	struct cache_ext_ds_registry *cache_ext_ds_registry;
+ };
+ 
+ struct mem_cgroup_threshold {
+@@ -320,6 +371,8 @@ struct mem_cgroup {
+ 	spinlock_t event_list_lock;
+ #endif /* CONFIG_MEMCG_V1 */
+ 
++	bool cache_ext_enabled;
++
+ 	struct mem_cgroup_per_node *nodeinfo[];
+ };
+ 
+diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
+index b18c2b2e7..fc71c671b 100644
+--- a/include/linux/mm_types.h
++++ b/include/linux/mm_types.h
+@@ -2001,4 +2001,31 @@ static inline unsigned long mmf_init_legacy_flags(unsigned long flags)
+ 	return flags & MMF_INIT_LEGACY_MASK;
+ }
+ 
++/*
++ * Page cache ext
++ */
++
++struct page_cache_ext_eviction_ctx {
++	// Input
++	unsigned long request_nr_folios_to_evict;
++	// Output
++	unsigned long nr_folios_to_evict;
++	struct folio *folios_to_evict[32];
++	s64 scores[32];
++};
++
++// TODO: How can I make only some fields page_cache_ext_eviction_ctx writeable?
++struct page_cache_ext_ops {
++	// Implement bpf_verifier_ops
++	s32  (*init)(struct mem_cgroup *memcg);
++	void (*evict_folios)(struct page_cache_ext_eviction_ctx *ctx, struct mem_cgroup *memcg);
++	void (*folio_added)(struct folio *folio);
++	void (*folio_accessed)(struct folio *folio);
++	void (*folio_evicted)(struct folio *folio);
++	// TODO: Add name?
++};
++
++
++/****************************************************************************/
++
+ #endif /* _LINUX_MM_TYPES_H */
+diff --git a/include/trace/events/filemap.h b/include/trace/events/filemap.h
+index 4dcf8e9e2..39de136eb 100644
+--- a/include/trace/events/filemap.h
++++ b/include/trace/events/filemap.h
+@@ -56,6 +56,11 @@ DEFINE_EVENT(mm_filemap_op_page_cache, mm_filemap_add_to_page_cache,
+ 	TP_ARGS(folio)
+ 	);
+ 
++DEFINE_EVENT(mm_filemap_op_page_cache, mm_filemap_add_to_page_cache_prefetch,
++	TP_PROTO(struct folio *folio),
++	TP_ARGS(folio)
++	);
++
+ DECLARE_EVENT_CLASS(mm_filemap_op_page_cache_range,
+ 
+ 	TP_PROTO(
+diff --git a/kernel/bpf/verifier.c b/kernel/bpf/verifier.c
+index fdc5fbb1f..d1aa7d489 100644
+--- a/kernel/bpf/verifier.c
++++ b/kernel/bpf/verifier.c
+@@ -29,6 +29,7 @@
+ #include <linux/cnum.h>
+ #include <linux/bpf_mem_alloc.h>
+ #include <net/xdp.h>
++#include <linux/cache_ext.h>
+ #include <linux/trace_events.h>
+ #include <linux/kallsyms.h>
+ 
+@@ -9618,6 +9619,75 @@ static int set_user_ringbuf_callback_state(struct bpf_verifier_env *env,
+ 	return 0;
+ }
+ 
++static int set_cache_ext_list_iterate_callback_state(
++	struct bpf_verifier_env *env,
++	struct bpf_func_state *caller,
++	struct bpf_func_state *callee,
++	int insn_idx)
++{
++	/*
++	 * int bpf_cache_ext_list_iterate(
++	       struct mem_cgroup *memcg,
++		   u64 list,
++		   int (iter_fn)(int idx, struct cache_ext_list_node *node),
++		   struct page_cache_ext_eviction_ctx *ctx)
++	 */
++	bpf_mark_reg_not_init(env, &callee->regs[BPF_REG_0]);
++
++	// Set scalar register
++	__mark_reg_unknown(env, &callee->regs[BPF_REG_1]);
++
++	// Set node pointer
++	callee->regs[BPF_REG_2].type = PTR_TO_BTF_ID;
++	__mark_reg_known_zero(&callee->regs[BPF_REG_2]);
++	callee->regs[BPF_REG_2].btf =  btf_vmlinux;
++	callee->regs[BPF_REG_2].btf_id = btf_tracing_ids[BTF_TRACING_TYPE_CACHE_EXT_LIST_NODE];
++
++	/* unused */
++	bpf_mark_reg_not_init(env, &callee->regs[BPF_REG_3]);
++	bpf_mark_reg_not_init(env, &callee->regs[BPF_REG_4]);
++	bpf_mark_reg_not_init(env, &callee->regs[BPF_REG_5]);
++
++	callee->in_callback_fn = true;
++	callee->callback_ret_range = retval_range(0, 2);
++	return 0;
++}
++
++static int set_cache_ext_list_sample_callback_state(
++	struct bpf_verifier_env *env,
++	struct bpf_func_state *caller,
++	struct bpf_func_state *callee,
++	int insn_idx)
++{
++	/*
++	 * int bpf_cache_ext_list_sample(struct mem_cgroup *memcg, u64 list,
++					s64(score_fn)(struct cache_ext_list_node *a),
++					struct sampling_options *opts,
++					struct page_cache_ext_eviction_ctx *ctx)
++	 */
++	bpf_mark_reg_not_init(env, &callee->regs[BPF_REG_0]);
++
++	// Set node pointer
++	callee->regs[BPF_REG_1].type = PTR_TO_BTF_ID;
++	__mark_reg_known_zero(&callee->regs[BPF_REG_1]);
++	callee->regs[BPF_REG_1].btf =  btf_vmlinux;
++	callee->regs[BPF_REG_1].btf_id = btf_tracing_ids[BTF_TRACING_TYPE_CACHE_EXT_LIST_NODE];
++
++	/* unused */
++	bpf_mark_reg_not_init(env, &callee->regs[BPF_REG_3]);
++	bpf_mark_reg_not_init(env, &callee->regs[BPF_REG_4]);
++	bpf_mark_reg_not_init(env, &callee->regs[BPF_REG_5]);
++
++	callee->in_callback_fn = true;
++	/* bpf_retval_range is s32-wide on this kernel (bpf_verifier.h); the
++	 * real score_fn callback returns s64, so tracked-range precision for
++	 * scores outside s32 is a known limitation inherited from this
++	 * kernel's verifier infra, not from the original cache_ext design.
++	 */
++	callee->callback_ret_range = retval_range(S32_MIN, S32_MAX);
++	return 0;
++}
++
+ static int set_rbtree_add_callback_state(struct bpf_verifier_env *env,
+ 					 struct bpf_func_state *caller,
+ 					 struct bpf_func_state *callee,
+@@ -11666,7 +11736,9 @@ static bool kfunc_spin_allowed(u32 btf_id)
+ 
+ static bool is_sync_callback_calling_kfunc(u32 btf_id)
+ {
+-	return is_bpf_rbtree_add_kfunc(btf_id);
++	return is_bpf_rbtree_add_kfunc(btf_id) ||
++	       cache_ext_is_callback_calling_kfunc_iterate(btf_id) ||
++	       cache_ext_is_callback_calling_kfunc_sample(btf_id);
+ }
+ 
+ static bool is_async_callback_calling_kfunc(u32 btf_id)
+@@ -13014,6 +13086,22 @@ static int check_kfunc_call(struct bpf_verifier_env *env, struct bpf_insn *insn,
+ 				func_name, meta.func_id);
+ 			return err;
+ 		}
++	} else if (cache_ext_is_callback_calling_kfunc_iterate(meta.func_id)) {
++		err = push_callback_call(env, insn, insn_idx, meta.subprogno,
++					 set_cache_ext_list_iterate_callback_state);
++		if (err) {
++			verbose(env, "kfunc %s#%d failed callback verification\n",
++				func_name, meta.func_id);
++			return err;
++		}
++	} else if (cache_ext_is_callback_calling_kfunc_sample(meta.func_id)) {
++		err = push_callback_call(env, insn, insn_idx, meta.subprogno,
++					 set_cache_ext_list_sample_callback_state);
++		if (err) {
++			verbose(env, "kfunc %s#%d failed callback verification\n",
++				func_name, meta.func_id);
++			return err;
++		}
+ 	}
+ 
+ 	if (meta.func_id == special_kfunc_list[KF_bpf_session_cookie]) {
+diff --git a/kernel/trace/bpf_trace.c b/kernel/trace/bpf_trace.c
+index 75495a5c3..6caa9e6f7 100644
+--- a/kernel/trace/bpf_trace.c
++++ b/kernel/trace/bpf_trace.c
+@@ -972,6 +972,7 @@ BTF_ID(func, vfs_fallocate)
+ BTF_ID(func, dentry_open)
+ BTF_ID(func, vfs_getattr)
+ BTF_ID(func, filp_close)
++BTF_ID(func, vfs_open)
+ BTF_SET_END(btf_allowlist_d_path)
+ 
+ static bool bpf_d_path_allowed(const struct bpf_prog *prog)
+diff --git a/mm/Makefile b/mm/Makefile
+index eff9f9e7e..9c3d7ef50 100644
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -55,7 +55,8 @@ obj-y			:= filemap.o mempool.o oom_kill.o fadvise.o \
+ 			   mm_init.o percpu.o slab_common.o \
+ 			   compaction.o show_mem.o \
+ 			   interval_tree.o list_lru.o workingset.o \
+-			   debug.o gup.o mmap_lock.o vma_init.o $(mmu-y)
++			   debug.o gup.o mmap_lock.o vma_init.o \
++			   page_cache_ext.o page_cache_ext_ds.o $(mmu-y)
+ 
+ # Give 'page_alloc' its own module-parameter namespace
+ page-alloc-y := page_alloc.o
+diff --git a/mm/filemap.c b/mm/filemap.c
+index d721986d5..8e012c6f9 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -221,7 +221,14 @@ static void filemap_unaccount_folio(struct address_space *mapping,
+ void __filemap_remove_folio(struct folio *folio, void *shadow)
+ {
+ 	struct address_space *mapping = folio->mapping;
+-
++	/* page_cache_ext: folio_evicted hook */
++	struct mem_cgroup *memcg = folio_memcg(folio);
++	struct page_cache_ext_ops *pcext_ops = get_page_cache_ext_ops(memcg);
++	if (pcext_ops != NULL && pcext_ops->folio_evicted != NULL)
++		pcext_ops->folio_evicted(folio);
++
++	if (memcg->cache_ext_enabled)
++		valid_folios_del(folio);
+ 	trace_mm_filemap_delete_from_page_cache(folio);
+ 	filemap_unaccount_folio(mapping, folio);
+ 	page_cache_delete(mapping, folio, shadow);
+@@ -329,7 +336,14 @@ void delete_from_page_cache_batch(struct address_space *mapping,
+ 	xa_lock_irq(&mapping->i_pages);
+ 	for (i = 0; i < folio_batch_count(fbatch); i++) {
+ 		struct folio *folio = fbatch->folios[i];
+-
++		/* page_cache_ext: folio_evicted hook */
++		struct mem_cgroup *memcg = folio_memcg(folio);
++		struct page_cache_ext_ops *pcext_ops = get_page_cache_ext_ops(memcg);
++		if (pcext_ops != NULL && pcext_ops->folio_evicted != NULL)
++			pcext_ops->folio_evicted(folio);
++
++		if (memcg->cache_ext_enabled)
++			valid_folios_del(folio);
+ 		trace_mm_filemap_delete_from_page_cache(folio);
+ 		filemap_unaccount_folio(mapping, folio);
+ 	}
+@@ -942,6 +956,16 @@ noinline int __filemap_add_folio(struct address_space *mapping,
+ 	if (xas_error(&xas))
+ 		goto error;
+ 
++
++	struct mem_cgroup *memcg = folio_memcg(folio);
++	/* page_cache_ext: Maintain the valid folios hashtable */
++	if (memcg->cache_ext_enabled)
++		valid_folios_add(folio);
++	/* page_cache_ext: folio_added hook */
++	struct page_cache_ext_ops *pcext_ops = get_page_cache_ext_ops(memcg);
++	if (pcext_ops != NULL && pcext_ops->folio_added != NULL)
++		pcext_ops->folio_added(folio);
++
+ 	trace_mm_filemap_add_to_page_cache(folio);
+ 	return 0;
+ error:
+diff --git a/mm/memcontrol.c b/mm/memcontrol.c
+index 6dc4888a9..6aa1940bd 100644
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -62,12 +62,17 @@
+ #include <linux/seq_buf.h>
+ #include <linux/sched/isolation.h>
+ #include <linux/kmemleak.h>
++#include <linux/proc_fs.h>
++#include <linux/minmax.h>
++#include <linux/rwsem.h>
++#include <linux/cache_ext.h>
+ #include "internal.h"
+ #include "swap_table.h"
+ #include <net/sock.h>
+ #include <net/ip.h>
+ #include "slab.h"
+ #include "memcontrol-v1.h"
++#include "page_cache_ext.h"
+ 
+ #include <linux/uaccess.h>
+ 
+@@ -128,6 +133,353 @@ struct mem_cgroup *vmpressure_to_memcg(struct vmpressure *vmpr)
+ #define CURRENT_OBJCG_UPDATE_BIT 0
+ #define CURRENT_OBJCG_UPDATE_FLAG (1UL << CURRENT_OBJCG_UPDATE_BIT)
+ 
++/*
++ * Page Cache Extension.
++ */
++struct page_cache_ext_enabled_cgroup {
++	struct cgroup *cgroup;
++	char path[PATH_MAX];
++	rwlock_t lock;
++};
++
++
++struct page_cache_ext_enabled_cgroup page_cache_ext_enabled_cgroup;
++
++void page_cache_ext_enabled_cgroup_init(void) {
++	page_cache_ext_enabled_cgroup.cgroup = NULL;
++	page_cache_ext_enabled_cgroup.path[0] = '\0';
++	rwlock_init(&page_cache_ext_enabled_cgroup.lock);
++}
++
++struct mem_cgroup *page_cache_ext_get_enabled_memcg(void) {
++	struct mem_cgroup *memcg;
++	struct cgroup *cgroup = READ_ONCE(page_cache_ext_enabled_cgroup.cgroup);
++	if (!cgroup) {
++		return NULL;
++	}
++	memcg = mem_cgroup_from_css(page_cache_ext_enabled_cgroup.cgroup->subsys[memory_cgrp_id]);
++	return memcg;
++}
++
++// New procfs file to read/write the cgroup
++ssize_t procfile_page_cache_ext_enabled_cgroup_read(struct file *file,
++	char __user *user_buffer, size_t count, loff_t *offset) {
++	read_lock(&page_cache_ext_enabled_cgroup.lock);
++	// Return current cgroup path stored in page_cache_ext_enabled_cgroup_path
++	ssize_t bytes_to_copy;
++	size_t len;
++	int ret;
++	loff_t pos = *offset;
++	// Check if offset is beyond the string length
++	len = strlen(page_cache_ext_enabled_cgroup.path);
++	if (pos >= len) {
++		read_unlock(&page_cache_ext_enabled_cgroup.lock);
++		return 0; // EOF
++	}
++	// Calculate the number of bytes to copy, ensuring we don't exceed count
++	bytes_to_copy = len - pos;
++	if (bytes_to_copy > count)
++		bytes_to_copy = count;
++	// Copy the data to user buffer
++	ret = copy_to_user(user_buffer, page_cache_ext_enabled_cgroup.path + pos, bytes_to_copy);
++	read_unlock(&page_cache_ext_enabled_cgroup.lock);
++	if (ret) {
++		return -EFAULT;
++	}
++	// Update the offset
++	*offset += bytes_to_copy;
++	return bytes_to_copy;
++}
++
++
++ssize_t procfile_page_cache_ext_enabled_cgroup_write(struct file *file,
++	const char __user *user_buffer, size_t count, loff_t *offset) {
++	// Get path from userspace buffer
++	struct cgroup *new_cgroup;
++	char new_cgroup_path[PATH_MAX];
++	char *new_cgroup_path_ptr;
++	if (count >= PATH_MAX)
++		return -ENAMETOOLONG;
++
++	if (copy_from_user(new_cgroup_path, user_buffer, count))
++		return -EFAULT;
++
++	// Null terminate the path
++	new_cgroup_path[count] = '\0';
++
++	// Remove leading and trailing whitespace
++	new_cgroup_path_ptr = strim(new_cgroup_path);
++
++	// Get the cgroup pointer for this path
++	new_cgroup = cgroup_get_from_path(new_cgroup_path_ptr);
++	if (IS_ERR(new_cgroup)) {
++		pr_err("page_cache_ext: Invalid cgroup path: %s\n", new_cgroup_path_ptr);
++		return PTR_ERR(new_cgroup);
++	}
++
++	// Change the cgroup pointer
++	write_lock(&page_cache_ext_enabled_cgroup.lock);
++	page_cache_ext_enabled_cgroup.cgroup = new_cgroup;
++	strscpy(page_cache_ext_enabled_cgroup.path, new_cgroup_path_ptr, PATH_MAX);
++	write_unlock(&page_cache_ext_enabled_cgroup.lock);
++
++	return count;
++}
++
++bool page_cache_ext_cgroup_enabled(struct cgroup *cgroup) {
++	bool res;
++	read_lock(&page_cache_ext_enabled_cgroup.lock);
++	res = (cgroup == page_cache_ext_enabled_cgroup.cgroup);
++	read_unlock(&page_cache_ext_enabled_cgroup.lock);
++	return res;
++}
++
++
++static const struct proc_ops proc_file_page_cache_ext_enabled_cgroup_fops = {
++    .proc_read = procfile_page_cache_ext_enabled_cgroup_read,
++    .proc_write = procfile_page_cache_ext_enabled_cgroup_write,
++};
++
++noinline struct page_cache_ext_ops *get_page_cache_ext_ops(struct mem_cgroup *memcg)
++{
++	if (memcg && memcg->cache_ext_enabled && page_cache_ext_cgroup_enabled(memcg->css.cgroup)) {
++		return READ_ONCE(page_cache_ext_ops);
++	}
++	return NULL;
++}
++
++
++
++
++ /*
++ ******************************************************************************
++ */
++
++
++/*
++ * Valid folios set code.
++ */
++
++
++static inline uintptr_t folio_ptr_to_key (struct folio *folio) {
++	return (uintptr_t)folio;
++}
++
++inline struct valid_folios_set *folio_to_valid_folios_set(struct folio *folio) {
++	// Get cgroup from folio
++	struct mem_cgroup *memcg = folio_memcg(folio);
++	// Get pgdat from folio
++	pg_data_t *pgdat = folio_pgdat(folio);
++	// Get node cgroup
++	struct mem_cgroup_per_node *node_cgroup = memcg->nodeinfo[pgdat->node_id];
++	// Get valid folios set from cgroup
++	struct valid_folios_set *valid_folios_set = node_cgroup->valid_folios_set;
++	return valid_folios_set;
++}
++
++inline struct valid_folios_set *memcg_to_valid_folios_set(struct mem_cgroup *memcg) {
++	return memcg->nodeinfo[0]->valid_folios_set;
++}
++
++inline struct valid_folios_set *lruvec_to_valid_folios_set(struct lruvec *lruvec) {
++	// Get cgroup from lruvec
++	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
++	// Get pgdat from lruvec
++	pg_data_t *pgdat = lruvec_pgdat(lruvec);
++	// Get node cgroup
++	struct mem_cgroup_per_node *node_cgroup = memcg->nodeinfo[pgdat->node_id];
++	// Get valid folios set from cgroup
++	struct valid_folios_set *valid_folios_set = node_cgroup->valid_folios_set;
++	return valid_folios_set;
++}
++
++spinlock_t *valid_folios_set_get_bucket_lock(struct valid_folios_set *valid_folios_set, struct folio *folio) {
++	uintptr_t key = folio_ptr_to_key(folio);
++	int bkt = hash_bucket_idx(valid_folios_set->valid_folios, key);
++	if (bkt < 0 || bkt >= VALID_FOLIOS_SET_SIZE) {
++		pr_err("invalid bkt: %d", bkt);
++		BUG();
++	}
++	return &valid_folios_set->bucket_locks[bkt];
++}
++
++struct valid_folios_set* init_valid_folios_set(int node, uint64_t num_buckets) {
++	struct sysinfo sysinfo;
++	si_meminfo(&sysinfo);
++	uint64_t total_memory_in_bytes = sysinfo.totalram * sysinfo.mem_unit;
++	uint64_t total_memory_in_mbytes = total_memory_in_bytes / (1024*1024);
++	pr_info("cache_ext: Cgroup sees available memory: %llu B (%llu MB)\n",
++		total_memory_in_bytes, total_memory_in_mbytes);
++	struct valid_folios_set *valid_folios_set;
++	// TODO: Change to vmalloc_node
++	valid_folios_set = vmalloc_huge(sizeof(struct valid_folios_set), GFP_KERNEL | __GFP_ZERO);
++	if (!valid_folios_set) {
++		pr_err("cache_ext: Failed to allocate valid folios set\n");
++		return NULL;
++	}
++	atomic64_set(&valid_folios_set->nr_entries, 0);
++
++	hash_init(valid_folios_set->valid_folios);
++	for (int i = 0; i < VALID_FOLIOS_SET_SIZE; i++) {
++		spin_lock_init(&valid_folios_set->bucket_locks[i]);
++	}
++	return valid_folios_set;
++}
++
++void free_valid_folios_set(struct valid_folios_set *valid_folios_set) {
++	struct valid_folio *cur;
++	struct hlist_node *tmp;
++	int bkt;
++	pr_info("Freeing valid folios set");
++	// TODO: Do we need to lock here?
++	hash_for_each_safe(valid_folios_set->valid_folios, bkt, tmp, cur, h_node) {
++		hash_del(&cur->h_node);
++		kfree(cur);
++	}
++	vfree(valid_folios_set);
++}
++
++void valid_folios_add(struct folio *folio) {
++	// TODO: Error check this!
++	struct valid_folio *new = kmalloc(sizeof(struct valid_folio), GFP_KERNEL);
++	WARN_ON_ONCE(!new);
++	struct cache_ext_list_node *node = cache_ext_list_node_alloc(folio);
++	new->folio_ptr = folio_ptr_to_key(folio);
++	struct valid_folios_set *valid_folios_set = folio_to_valid_folios_set(folio);
++	// Lock the bucket
++	spinlock_t *bucket_lock = valid_folios_set_get_bucket_lock(valid_folios_set, folio);
++	spin_lock(bucket_lock);
++	// Use valid_folios_exists function to check if the folio is already in the valid folio hash table
++	if (valid_folios_exists_unlocked(valid_folios_set, folio)) {
++		spin_unlock(bucket_lock);
++		kfree(new);
++		cache_ext_list_node_free(node);
++		return;
++	}
++	// The folio is valid, so we add it to the valid folio hash table
++	new->cache_ext_node = node;
++	hash_add(valid_folios_set->valid_folios, &new->h_node, new->folio_ptr);
++	spin_unlock(bucket_lock);
++	atomic64_fetch_add(1, &valid_folios_set->nr_entries);
++}
++
++/*
++ * Delete a folio from the valid folio hash table. If the folio is not in the
++ * hash table, do nothing.
++ */
++void valid_folios_del(struct folio *folio) {
++	if (in_interrupt()) {
++		pr_err("valid_folios_del called in irq mode!\n");
++	}
++	struct valid_folios_set *valid_folios_set = folio_to_valid_folios_set(folio);
++	struct valid_folio *cur;
++	spinlock_t *bucket_lock = valid_folios_set_get_bucket_lock(valid_folios_set, folio);
++	spin_lock(bucket_lock);
++	uintptr_t key = folio_ptr_to_key(folio);
++	hash_for_each_possible(valid_folios_set->valid_folios, cur, h_node, key) {
++		if (cur->folio_ptr == key) {
++			hash_del(&cur->h_node);
++			// TODO: If BPF has not removed it we are screwed!
++			// Change to dealloc in BPF.
++
++			cache_ext_ds_registry_write_lock(folio);
++			// Is it in a list currently? If so, remove it.
++			// if (!list_empty(&cur->cache_ext_node->node)) {
++			list_del(&cur->cache_ext_node->node);
++			//}
++			cache_ext_ds_registry_write_unlock(folio);
++			cache_ext_list_node_free(cur->cache_ext_node);
++
++			kfree(cur);
++			spin_unlock(bucket_lock);
++			atomic64_fetch_add(-1, &valid_folios_set->nr_entries);
++			return;
++		}
++	}
++	spin_unlock(bucket_lock);
++}
++
++void valid_folios_clear_list(struct valid_folios_set *valid_folios_set) {
++	// For each bucket:
++	// 1. Lock the bucket
++	// 2. Iterate over the valid folios in the bucket
++	// 3. Set the cache_ext_node pointer to null
++	// 4. Unlock the bucket
++	struct valid_folio *cur;
++	spinlock_t *bucket_lock;
++
++	for (int i = 0; i < VALID_FOLIOS_SET_SIZE; i++) {
++		bucket_lock = &valid_folios_set->bucket_locks[i];
++		spin_lock(bucket_lock);
++		hlist_for_each_entry(cur, &valid_folios_set->valid_folios[i], h_node) {
++			INIT_LIST_HEAD(&cur->cache_ext_node->node);
++		}
++		spin_unlock(bucket_lock);
++	}
++}
++
++bool valid_folios_exists(struct valid_folios_set *valid_folios_set, struct folio *folio) {
++	spinlock_t *bucket_lock = valid_folios_set_get_bucket_lock(valid_folios_set, folio);
++	spin_lock(bucket_lock);
++	bool ret = valid_folios_exists_unlocked(valid_folios_set, folio);
++	spin_unlock(bucket_lock);
++	return ret;
++}
++
++bool valid_folios_exists_unlocked(struct valid_folios_set *valid_folios_set, struct folio *folio) {
++	// TODO: Add read lock.
++	// Use hash_for_each_possible to iterate over the valid folio hash table
++	// and check if the folio is valid
++	struct valid_folio *cur;
++	uintptr_t key = folio_ptr_to_key(folio);
++	hash_for_each_possible(valid_folios_set->valid_folios, cur, h_node, key) {
++		if (cur->folio_ptr == key) {
++			return true;
++		}
++	}
++	return false;
++}
++
++u64 valid_folios_get_nr_entries(struct valid_folios_set *valid_folios_set) {
++	return (u64) (atomic64_read(&valid_folios_set->nr_entries));
++}
++
++struct valid_folio *valid_folios_lookup(struct folio *folio) {
++	struct valid_folios_set *valid_folios_set = folio_to_valid_folios_set(folio);
++	struct valid_folio *cur;
++	uintptr_t key = folio_ptr_to_key(folio);
++	hash_for_each_possible(valid_folios_set->valid_folios, cur, h_node, key) {
++		if (cur->folio_ptr == key) {
++			return cur;
++		}
++	}
++	return NULL;
++}
++
++static u64 mem_cgroup_page_tracking_nr_entries_read(
++	struct cgroup_subsys_state *css, struct cftype *cft)
++{
++	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
++	// Iterate per-node cgroups and add
++	u64 total_entries = 0;
++	struct mem_cgroup_per_node *pn;
++	int nid;
++
++	for_each_node(nid) {
++		pn = memcg->nodeinfo[nid];
++		total_entries += valid_folios_get_nr_entries(pn->valid_folios_set);
++	}
++	return total_entries;
++	return mem_cgroup_swappiness(memcg);
++}
++
++
++
++
++/*
++ ******************************************************************************
++ */
++
+ static DEFINE_SPINLOCK(objcg_lock);
+ 
+ bool mem_cgroup_kmem_disabled(void)
+@@ -4023,6 +4375,14 @@ static void free_mem_cgroup_per_node_info(struct mem_cgroup_per_node *pn)
+ 		return;
+ 
+ 	free_percpu(pn->lruvec_stats_percpu);
++	if (pn->memcg && pn->memcg->cache_ext_enabled) {
++		if (pn->valid_folios_set == NULL) {
++			pr_err("cache_ext: valid_folios_set is NULL but cgroup is cache_ext_enabled\n");
++		} else {
++			free_valid_folios_set(pn->valid_folios_set);
++		}
++	}
++	kfree(pn->cache_ext_ds_registry);
+ 	kfree(pn->lruvec_stats);
+ 	kfree(pn);
+ }
+@@ -4050,6 +4410,7 @@ static bool alloc_mem_cgroup_per_node_info(struct mem_cgroup *memcg, int node)
+ 
+ 	lruvec_init(&pn->lruvec);
+ 	pn->memcg = memcg;
++	pn->valid_folios_set = NULL;
+ 
+ 	memcg->nodeinfo[node] = pn;
+ 	return true;
+@@ -4058,6 +4419,39 @@ static bool alloc_mem_cgroup_per_node_info(struct mem_cgroup *memcg, int node)
+ 	return false;
+ }
+ 
++static int add_cache_ext_structures(struct mem_cgroup *memcg) {
++	int node;
++	struct mem_cgroup_per_node *pn;
++
++	if (unlikely(memcg->css.cgroup == NULL)) {
++		pr_err("cache_ext: memcg css is NULL\n");
++		return -1;
++	}
++
++	for_each_node(node) {
++		pn = memcg->nodeinfo[node];
++		// Get memory size for the node
++		struct sysinfo si;
++		si_meminfo(&si);
++		uint64_t memory_in_bytes  = si.totalram * si.mem_unit;
++		uint64_t max_num_pages = memory_in_bytes / PAGE_SIZE;
++		uint64_t num_buckets = roundup_pow_of_two(max_num_pages);
++		pr_info("cache_ext: Creating cache ext structures for node %d, num_buckets = %llu\n", node, num_buckets);
++		pn->valid_folios_set = init_valid_folios_set(node, num_buckets);
++		if (pn->valid_folios_set == NULL) {
++			pr_err("cache_ext: Failed to initialize valid folios set for node %d\n", node);
++			return -1;
++		}
++		pn->cache_ext_ds_registry = kzalloc(sizeof(*pn->cache_ext_ds_registry), GFP_KERNEL);
++		if (pn->cache_ext_ds_registry == NULL) {
++			pr_err("cache_ext: Failed to allocate ds registry for node %d\n", node);
++			return -1;
++		}
++		cache_ext_ds_registry_init(pn->cache_ext_ds_registry);
++	}
++	return 0;
++}
++
+ static void __mem_cgroup_free(struct mem_cgroup *memcg)
+ {
+ 	int node;
+@@ -4211,6 +4605,28 @@ static int mem_cgroup_css_online(struct cgroup_subsys_state *css)
+ 	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+ 	struct obj_cgroup *objcg;
+ 	int nid;
++	char cache_ext_name[PATH_MAX];
++	int cache_ext_ret;
++
++	if (memcg->css.cgroup == NULL) {
++		pr_err("cache_ext: Cgroup has no css.cgroup\n");
++		return -1;
++	}
++
++	cache_ext_ret = cgroup_name(memcg->css.cgroup, cache_ext_name, PATH_MAX);
++	if (cache_ext_ret < 0) {
++		pr_err("mem_cgroup_css_online: Failed to get cgroup name\n");
++		return -1;
++	}
++	if (str_has_prefix(cache_ext_name, "cache_ext")) {
++		pr_info("cache_ext: Cgroup %s is a cache_ext cgroup\n", cache_ext_name);
++		cache_ext_ret = add_cache_ext_structures(memcg);
++		if (cache_ext_ret < 0) {
++			pr_err("cache_ext: Failed to add cache ext structures for cgroup %s\n", cache_ext_name);
++			return -1;
++		}
++		memcg->cache_ext_enabled = true;
++	}
+ 
+ 	memcg_online_kmem(memcg);
+ 
+@@ -5070,6 +5486,10 @@ static struct cftype memory_files[] = {
+ 		.flags = CFTYPE_NS_DELEGATABLE,
+ 		.write = memory_reclaim,
+ 	},
++	{
++		.name = "page_tracking.nr_entries",
++		.read_u64 = mem_cgroup_page_tracking_nr_entries_read,
++	},
+ 	{ }	/* terminate */
+ };
+ 
+@@ -5539,6 +5959,20 @@ int __init mem_cgroup_init(void)
+ 	unsigned int memcg_size;
+ 	int cpu;
+ 
++	/*
++	 * Page cache extension
++	 */
++	{
++		struct proc_dir_entry *entry;
++
++		entry = proc_create("page_cache_ext_enabled_cgroup", 0666, NULL,
++					&proc_file_page_cache_ext_enabled_cgroup_fops);
++		if (!entry)
++			return -ENOMEM;
++
++		page_cache_ext_enabled_cgroup_init();
++	}
++
+ 	/*
+ 	 * Currently s32 type (can refer to struct batched_lruvec_stat) is
+ 	 * used for per-memcg-per-cpu caching of per-node statistics. In order
+diff --git a/mm/page_cache_ext.c b/mm/page_cache_ext.c
+new file mode 100644
+index 000000000..83e51516a
+--- /dev/null
++++ b/mm/page_cache_ext.c
+@@ -0,0 +1,200 @@
++// SPDX-License-Identifier: GPL-2.0
++#include <linux/types.h>
++#include <linux/mm_types.h>
++#include <linux/kernel.h>
++#include <linux/bpf_verifier.h>
++#include <linux/bpf.h>
++#include <linux/btf.h>
++#include <linux/memcontrol.h>
++#include <linux/cache_ext.h>
++
++// extern struct bpf_struct_ops bpf_page_cache_ext_ops;
++static const struct btf_type *page_cache_ext_eviction_ctx_type;
++struct page_cache_ext_ops *page_cache_ext_ops;
++
++static int bpf_page_cache_ext_init(struct btf *btf)
++{
++	u32 type_id;
++
++	type_id = btf_find_by_name_kind(btf, "page_cache_ext_eviction_ctx",
++					BTF_KIND_STRUCT);
++	if (type_id < 0) {
++		pr_err("page_cache_ext: failed to find struct page_cache_ext_eviction_ctx\n");
++		return -EINVAL;
++	}
++	page_cache_ext_eviction_ctx_type = btf_type_by_id(btf, type_id);
++	return 0;
++}
++
++// What helpers are available?
++static const struct bpf_func_proto *
++bpf_page_cache_ext_get_func_proto(enum bpf_func_id func_id,
++				  const struct bpf_prog *prog)
++{
++	switch (func_id) {
++	case BPF_FUNC_get_current_pid_tgid:
++		return &bpf_get_current_pid_tgid_proto;
++	default:
++		return bpf_base_func_proto(func_id, prog);
++	}
++}
++
++// This is the verifier's check for context access. Context is always R1.
++static bool bpf_page_cache_ext_is_valid_access(int off, int size,
++					       enum bpf_access_type type,
++					       const struct bpf_prog *prog,
++					       struct bpf_insn_access_aux *info)
++{
++	//	return false;
++	// if (type != BPF_READ)
++	//	return false;
++	if (off % size != 0)
++		return false;
++
++	return btf_ctx_access(off, size, type, prog, info);
++}
++
++static int bpf_page_cache_ext_btf_struct_access(struct bpf_verifier_log *log,
++						const struct bpf_reg_state *reg,
++						int off, int size)
++{
++	// For each of the allowed types, allow read access.
++	const struct btf_type *t;
++
++	t = btf_type_by_id(reg->btf, reg->btf_id);
++	if (t == page_cache_ext_eviction_ctx_type) {
++		if (off + size > sizeof(struct page_cache_ext_eviction_ctx)) {
++			bpf_log(log,
++				"out of bounds access at off %d with size %d\n",
++				off, size);
++			return -EACCES;
++		}
++		return SCALAR_VALUE;
++	}
++
++	return -EACCES;
++}
++
++static int bpf_page_cache_ext_reg(void *kdata, struct bpf_link *link)
++{
++	struct page_cache_ext_ops *ops = kdata;
++	int ret = 0;
++	// Get the memory cgroup
++	struct mem_cgroup *memcg = page_cache_ext_get_enabled_memcg();
++
++	if (memcg == NULL) {
++		pr_crit("page_cache_ext: failed to get memcg for registration!\n");
++		return -EINVAL;
++	}
++	pr_info("page_cache_ext: Calling init\n");
++	if (ops->init) {
++		ret = ops->init(memcg);
++		if (ret) {
++			pr_err("page_cache_ext: init failed with error code: %d\n",
++			       ret);
++			cache_ext_ds_registry_del_all(memcg);
++			return ret;
++		}
++	}
++
++	pr_info("page_cache_ext: Registering struct ops\n");
++	WRITE_ONCE(page_cache_ext_ops, kdata);
++	return 0;
++}
++
++static void bpf_page_cache_ext_unreg(void *kdata, struct bpf_link *link)
++{
++	pr_info("page_cache_ext: Unregistering struct ops\n");
++	WRITE_ONCE(page_cache_ext_ops, NULL);
++
++	// Delete the registry and all data structures from the memory cgroup.
++	struct mem_cgroup *memcg = page_cache_ext_get_enabled_memcg();
++
++	if (memcg == NULL) {
++		pr_crit("page_cache_ext: failed to get memcg for release!\n");
++		return;
++	}
++	pr_info("page_cache_ext: unreg: Memcg pointer: %p\n", memcg);
++	cache_ext_ds_registry_del_all(memcg);
++}
++
++static int bpf_page_cache_ext_init_member(const struct btf_type *t,
++					  const struct btf_member *member,
++					  void *kdata, const void *udata)
++{
++	// Initialize attributes of struct_ops. Not for the function pointers.
++	// For example, sched_ext uses it to initialize timeout, flags, etc.
++	// Not needed yet.
++	return 0;
++}
++
++static int bpf_page_cache_ext_check_member(const struct btf_type *t,
++					   const struct btf_member *member,
++					   const struct bpf_prog *prog)
++{
++	// Check the attached member functions or attributes.
++	// TODO: Check sleepability here!
++	return 0;
++}
++
++static int bpf_page_cache_ext_validate(void *kdata)
++{
++	return 0;
++}
++
++static const struct bpf_verifier_ops bpf_page_cache_ext_verifier_ops = {
++	.get_func_proto = bpf_page_cache_ext_get_func_proto,
++	.is_valid_access = bpf_page_cache_ext_is_valid_access,
++	.btf_struct_access = bpf_page_cache_ext_btf_struct_access,
++};
++
++/*
++ * Pure type-signature holders for kCFI indirect-call validation, one per
++ * struct page_cache_ext_ops member. Never invoked; the struct_ops core only
++ * takes their addresses. Same pattern as __bpf_ops_sched_ext_ops in
++ * kernel/sched/ext.c.
++ */
++static s32 page_cache_ext_ops__init(struct mem_cgroup *memcg) { return -EINVAL; }
++static void page_cache_ext_ops__evict_folios(struct page_cache_ext_eviction_ctx *ctx,
++					      struct mem_cgroup *memcg) {}
++static void page_cache_ext_ops__folio_added(struct folio *folio) {}
++static void page_cache_ext_ops__folio_accessed(struct folio *folio) {}
++static void page_cache_ext_ops__folio_evicted(struct folio *folio) {}
++
++static struct page_cache_ext_ops __bpf_ops_page_cache_ext_ops = {
++	.init = page_cache_ext_ops__init,
++	.evict_folios = page_cache_ext_ops__evict_folios,
++	.folio_added = page_cache_ext_ops__folio_added,
++	.folio_accessed = page_cache_ext_ops__folio_accessed,
++	.folio_evicted = page_cache_ext_ops__folio_evicted,
++};
++
++// Callbacks to define the struct_ops map
++struct bpf_struct_ops bpf_page_cache_ext_ops = {
++	.verifier_ops = &bpf_page_cache_ext_verifier_ops,
++	.init = bpf_page_cache_ext_init,
++	.reg = bpf_page_cache_ext_reg,
++	.unreg = bpf_page_cache_ext_unreg,
++	.init_member = bpf_page_cache_ext_init_member,
++	.check_member = bpf_page_cache_ext_check_member,
++	.validate = bpf_page_cache_ext_validate,
++	.cfi_stubs = &__bpf_ops_page_cache_ext_ops,
++	.owner = THIS_MODULE,
++	.name = "page_cache_ext_ops",
++};
++
++/*
++ * v6.6.8-era cache_ext relied on a shared BPF_STRUCT_OPS_TYPE(page_cache_ext_ops)
++ * entry in kernel/bpf/bpf_struct_ops_types.h to auto-register this struct_ops
++ * type. That whole X-macro mechanism is gone on this kernel in favour of an
++ * explicit per-subsystem register_bpf_struct_ops() call (see e.g.
++ * net/ipv4/bpf_tcp_ca.c:bpf_tcp_ca_kfunc_init()) - without this, nothing else
++ * ever registers page_cache_ext_ops and the type silently never becomes
++ * available to BPF programs, with no build-time or load-time error pointing
++ * at why.
++ */
++static int __init bpf_page_cache_ext_kfunc_init(void)
++{
++	return register_bpf_struct_ops(&bpf_page_cache_ext_ops, page_cache_ext_ops);
++}
++late_initcall(bpf_page_cache_ext_kfunc_init);
+diff --git a/mm/page_cache_ext.h b/mm/page_cache_ext.h
+new file mode 100644
+index 000000000..0f029457d
+--- /dev/null
++++ b/mm/page_cache_ext.h
+@@ -0,0 +1,8 @@
++// SPDX-License-Identifier: GPL-2.0
++#ifndef CONFIG_PAGE_CACHE_EXT_H
++#define CONFIG_PAGE_CACHE_EXT_H
++
++#include <linux/mm_types.h>
++
++extern struct page_cache_ext_ops *page_cache_ext_ops;
++#endif
+diff --git a/mm/page_cache_ext_ds.c b/mm/page_cache_ext_ds.c
+new file mode 100644
+index 000000000..f71ab1ce8
+--- /dev/null
++++ b/mm/page_cache_ext_ds.c
+@@ -0,0 +1,772 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * BPF-Exposed data structures for page_cache_ext.
++ */
++
++#include <linux/list.h>
++#include <linux/spinlock.h>
++#include <linux/slab.h>
++#include <linux/memcontrol.h>
++#include <linux/atomic.h>
++#include <linux/bpf.h>
++#include <linux/cache_ext.h>
++#include <linux/btf.h>
++#include <linux/sort.h>
++
++/******************************************************************************
++ * Linked List ****************************************************************
++ *****************************************************************************/
++
++// TODO: In BPF, we need to add the ability to iterate through the linked list.
++
++/*
++ * How does BPF add its own data to a data structure node?
++ * - Solution 1: Embed the `cache_ext_list_node` in a BPF-defined struct and
++ *               use `bpf_obj_new`. The problem is who initializes the
++ *				 `cache_ext_list_node`.
++ * - Solution 2: Use some page-local storage to store the BPF data.
++ * - Solution 3: Use a map from node to data in BPF. This is slower but easier
++ *               to start with we will start here.
++ */
++
++struct cache_ext_list *cache_ext_list_alloc(void)
++{
++	struct cache_ext_list *list =
++		kmalloc(sizeof(struct cache_ext_list), GFP_KERNEL);
++	if (!list) {
++		return NULL;
++	}
++	INIT_LIST_HEAD(&list->head);
++	return list;
++}
++
++struct cache_ext_list_node *cache_ext_list_node_alloc(struct folio *folio)
++{
++	struct cache_ext_list_node *node =
++		kmalloc(sizeof(struct cache_ext_list_node), GFP_KERNEL);
++	if (!node) {
++		return NULL;
++	}
++	INIT_LIST_HEAD(&node->node);
++	node->folio = folio;
++	return node;
++}
++
++void cache_ext_list_node_free(struct cache_ext_list_node *node)
++{
++	// TODO: Verify it's isolated first.
++	kfree(node);
++}
++
++int __cache_ext_list_add_impl(struct cache_ext_list *list, struct folio *folio,
++			      bool tail)
++{
++	struct valid_folios_set *valid_folios_set = folio_to_valid_folios_set(folio);
++	spinlock_t *bucket_lock = valid_folios_set_get_bucket_lock(valid_folios_set, folio);
++
++	spin_lock(bucket_lock);
++	struct valid_folio *valid_folio = valid_folios_lookup(folio);
++
++	if (!valid_folio) {
++		spin_unlock(bucket_lock);
++		return -1;
++	}
++
++	// TODO: Make sure the cache_ext_list still exists.
++
++	// Get the global list lock
++	cache_ext_ds_registry_write_lock(folio);
++
++	// Is this node already in a list?
++	struct cache_ext_list_node *node = valid_folio->cache_ext_node;
++
++	if (!list_empty(&node->node)) {
++		cache_ext_ds_registry_write_unlock(folio);
++		spin_unlock(bucket_lock);
++		return -1;
++	}
++
++	if (tail)
++		list_add_tail(&valid_folio->cache_ext_node->node, &list->head);
++	else
++		list_add(&valid_folio->cache_ext_node->node, &list->head);
++
++	cache_ext_ds_registry_write_unlock(folio);
++	spin_unlock(bucket_lock);
++	return 0;
++}
++
++int cache_ext_list_add(struct cache_ext_list *list, struct folio *folio)
++{
++	return __cache_ext_list_add_impl(list, folio, false);
++}
++
++int cache_ext_list_add_tail(struct cache_ext_list *list, struct folio *folio)
++{
++	return __cache_ext_list_add_impl(list, folio, true);
++}
++
++int cache_ext_list_move(struct cache_ext_list *list, struct folio *folio,
++			bool tail)
++{
++	struct valid_folios_set *valid_folios_set = folio_to_valid_folios_set(folio);
++	spinlock_t *bucket_lock = valid_folios_set_get_bucket_lock(valid_folios_set, folio);
++
++	spin_lock(bucket_lock);
++	struct valid_folio *valid_folio = valid_folios_lookup(folio);
++
++	if (!valid_folio) {
++		spin_unlock(bucket_lock);
++		return -1;
++	}
++
++	// Get the global list lock
++	cache_ext_ds_registry_write_lock(folio);
++
++	// Add the node to the new list
++	if (tail)
++		list_move_tail(&valid_folio->cache_ext_node->node, &list->head);
++	else
++		list_move(&valid_folio->cache_ext_node->node, &list->head);
++
++	cache_ext_ds_registry_write_unlock(folio);
++	spin_unlock(bucket_lock);
++	return 0;
++}
++
++int cache_ext_list_del(struct folio *folio)
++{
++	struct valid_folios_set *valid_folios_set = folio_to_valid_folios_set(folio);
++	spinlock_t *bucket_lock = valid_folios_set_get_bucket_lock(valid_folios_set, folio);
++
++	spin_lock(bucket_lock);
++
++	struct valid_folio *valid_folio = valid_folios_lookup(folio);
++
++	if (!valid_folio) {
++		spin_unlock(bucket_lock);
++		return -ENOENT;
++	}
++
++	// Get the global list lock
++	cache_ext_ds_registry_write_lock(folio);
++
++	// Check if the node is already in no list.
++	if (list_empty(&valid_folio->cache_ext_node->node)) {
++		cache_ext_ds_registry_write_unlock(folio);
++		spin_unlock(bucket_lock);
++		return -1;
++	}
++
++	list_del_init(&valid_folio->cache_ext_node->node);
++
++	cache_ext_ds_registry_write_unlock(folio);
++	spin_unlock(bucket_lock);
++	return 0;
++}
++
++enum cache_ext_iter_callback_ret {
++	CACHE_EXT_CONTINUE_ITER = 0,
++	CACHE_EXT_STOP_ITER = 1,
++	CACHE_EXT_EVICT_NODE = 2,
++};
++
++enum cache_ext_iter_ret {
++	CACHE_EXT_DONE_ITER = 0,
++	CACHE_EXT_MAX_ITER_REACHED = 8,
++	CACHE_EXT_EVICT_ARRAY_FILLED = 9,
++};
++
++int cache_ext_list_iterate(struct mem_cgroup *memcg,
++			   struct cache_ext_list *list, void *iter_fn,
++			   struct page_cache_ext_eviction_ctx *ctx)
++{
++	uint64_t ret = CACHE_EXT_DONE_ITER, cb_ret, iter = 0;
++	uint64_t max_iter = 4096;
++	struct cache_ext_list_node *node;
++	bpf_callback_t bpf_iter_fn = (bpf_callback_t)iter_fn;
++
++	if (ctx->nr_folios_to_evict >= ARRAY_SIZE(ctx->folios_to_evict))
++		return CACHE_EXT_EVICT_ARRAY_FILLED;
++
++	struct cache_ext_ds_registry *registry = cache_ext_ds_registry_from_memcg(memcg);
++
++	read_lock(&registry->lock);
++
++	list_for_each_entry(node, &list->head, node) {
++		if (iter > max_iter) {
++			ret = CACHE_EXT_MAX_ITER_REACHED;
++			break;
++		}
++
++		// TODO: Ensure that we don't let the callback use any of the list
++		// helpers, or we will have a deadlock.
++		cb_ret = bpf_iter_fn((u64)iter, (u64)node, (u64)0, (u64)0, (u64)0);
++		iter++;
++
++		if (cb_ret == CACHE_EXT_CONTINUE_ITER) {
++			continue;
++		} else if (cb_ret == CACHE_EXT_STOP_ITER) {
++			ret = CACHE_EXT_DONE_ITER;
++			break;
++		} else if (cb_ret == CACHE_EXT_EVICT_NODE) {
++			ctx->folios_to_evict[ctx->nr_folios_to_evict] = node->folio;
++			ctx->nr_folios_to_evict++;
++
++			if (ctx->nr_folios_to_evict == ARRAY_SIZE(ctx->folios_to_evict)) {
++				ret = CACHE_EXT_EVICT_ARRAY_FILLED;
++				break;
++			}
++		} else {
++			pr_warn("cache_ext: Unknown iterate return code\n");
++			break;
++		}
++	}
++
++	read_unlock(&registry->lock);
++	return ret;
++}
++
++enum cache_ext_iterate_mode {
++	CACHE_EXT_ITERATE_SKIP = 0,
++	CACHE_EXT_ITERATE_HEAD,
++	CACHE_EXT_ITERATE_TAIL,
++	CACHE_EXT_ITERATE_MAX,
++};
++
++enum cache_ext_iterate_list {
++	CACHE_EXT_ITERATE_SELF = 0,
++};
++
++struct cache_ext_iterate_opts {
++	// Options for CACHE_EXT_CONTINUE_ITER nodes
++	u64 continue_list;
++	u64 continue_mode;
++
++	// Options for CACHE_EXT_EVICT_NODE nodes
++	u64 evict_list;
++	u64 evict_mode;
++
++	// Output
++	u64 nr_folios_continue;
++	u64 nr_folios_evict;
++};
++
++static bool cache_ext_validate_iterate_opts(struct cache_ext_iterate_opts *opts)
++{
++	if (opts->continue_mode >= CACHE_EXT_ITERATE_MAX)
++		return false;
++
++	if (opts->evict_mode >= CACHE_EXT_ITERATE_MAX)
++		return false;
++
++	if (opts->continue_list != CACHE_EXT_ITERATE_SELF &&
++	    opts->continue_mode == CACHE_EXT_ITERATE_SKIP)
++		return false;
++
++	if (opts->evict_list != CACHE_EXT_ITERATE_SELF &&
++	    opts->evict_mode == CACHE_EXT_ITERATE_SKIP)
++		return false;
++	return true;
++}
++
++int cache_ext_list_iterate_extended(struct mem_cgroup *memcg,
++			   struct cache_ext_list *list, void *iter_fn,
++			   struct cache_ext_iterate_opts *opts,
++			   struct page_cache_ext_eviction_ctx *ctx)
++{
++	uint64_t ret = CACHE_EXT_DONE_ITER, cb_ret, iter = 0;
++	uint64_t max_iter = 4096;
++	struct cache_ext_list_node *node, *node2;
++	bpf_callback_t bpf_iter_fn = (bpf_callback_t)iter_fn;
++	struct cache_ext_list *continue_list, *evict_list;
++
++	if (!cache_ext_validate_iterate_opts(opts))
++		return -1;
++
++	if (ctx->nr_folios_to_evict >= ARRAY_SIZE(ctx->folios_to_evict))
++		return CACHE_EXT_EVICT_ARRAY_FILLED;
++
++	// TODO: pass this from caller
++	struct cache_ext_ds_registry *registry = cache_ext_ds_registry_from_memcg(memcg);
++
++	if (opts->continue_list != CACHE_EXT_ITERATE_SELF) {
++		continue_list = cache_ext_ds_registry_get(registry, opts->continue_list);
++		if (!continue_list)
++			return -1;
++	} else {
++		continue_list = list;
++	}
++
++	if (opts->evict_list != CACHE_EXT_ITERATE_SELF) {
++		evict_list = cache_ext_ds_registry_get(registry, opts->evict_list);
++		if (!evict_list)
++			return -1;
++	} else {
++		evict_list = list;
++	}
++
++	if (opts->continue_mode == CACHE_EXT_ITERATE_SKIP && opts->evict_mode == CACHE_EXT_ITERATE_SKIP)
++		read_lock(&registry->lock);
++	else
++		write_lock(&registry->lock);
++
++	list_for_each_entry_safe(node, node2, &list->head, node) {
++		if (iter > max_iter) {
++			ret = CACHE_EXT_MAX_ITER_REACHED;
++			break;
++		}
++
++		// TODO: Ensure that we don't let the callback use any of the list
++		// helpers, or we will have a deadlock.
++		cb_ret = bpf_iter_fn((u64)iter, (u64)node, (u64)0, (u64)0, (u64)0);
++		iter++;
++
++		if (cb_ret == CACHE_EXT_CONTINUE_ITER) {
++			if (opts->continue_mode == CACHE_EXT_ITERATE_HEAD)
++				list_move(&node->node, &continue_list->head);
++			else if (opts->continue_mode == CACHE_EXT_ITERATE_TAIL)
++				list_move_tail(&node->node, &continue_list->head);
++
++			opts->nr_folios_continue++;
++
++			continue;
++		} else if (cb_ret == CACHE_EXT_STOP_ITER) {
++			ret = CACHE_EXT_DONE_ITER;
++			break;
++		} else if (cb_ret == CACHE_EXT_EVICT_NODE) {
++			ctx->folios_to_evict[ctx->nr_folios_to_evict] = node->folio;
++			ctx->nr_folios_to_evict++;
++
++			if (opts->evict_mode == CACHE_EXT_ITERATE_HEAD)
++				list_move(&node->node, &evict_list->head);
++			else if (opts->evict_mode == CACHE_EXT_ITERATE_TAIL)
++				list_move_tail(&node->node, &evict_list->head);
++
++			opts->nr_folios_evict++;
++
++			if (ctx->nr_folios_to_evict == ARRAY_SIZE(ctx->folios_to_evict)) {
++				ret = CACHE_EXT_EVICT_ARRAY_FILLED;
++				break;
++			}
++		} else {
++			pr_warn("cache_ext: Unknown iterate return code\n");
++			break;
++		}
++	}
++
++	if (opts->continue_mode == CACHE_EXT_CONTINUE_ITER && opts->evict_mode == CACHE_EXT_CONTINUE_ITER)
++		read_unlock(&registry->lock);
++	else
++		write_unlock(&registry->lock);
++
++	return ret;
++}
++
++/*
++ * Free the list.
++ */
++int cache_ext_list_free(struct cache_ext_list *list)
++{
++	struct cache_ext_list_node *node, *tmp;
++
++	list_for_each_entry_safe(node, tmp, &list->head, node) {
++		list_del(&node->node);
++	}
++
++	kfree(list);
++	return 0;
++}
++
++// BPF API
++
++__bpf_kfunc int bpf_cache_ext_list_add(u64 list, struct folio *folio)
++{
++	struct cache_ext_list *list_ptr = cache_ext_ds_registry_get(
++		cache_ext_ds_registry_from_folio(folio), list);
++	if (!list_ptr)
++		return -1;
++
++	return cache_ext_list_add(list_ptr, folio);
++};
++
++__bpf_kfunc int bpf_cache_ext_list_add_tail(u64 list, struct folio *folio)
++{
++	struct cache_ext_list *list_ptr = cache_ext_ds_registry_get(
++		cache_ext_ds_registry_from_folio(folio), list);
++	if (!list_ptr)
++		return -1;
++
++	return cache_ext_list_add_tail(list_ptr, folio);
++};
++
++__bpf_kfunc int bpf_cache_ext_list_move(u64 list, struct folio *folio, bool tail)
++{
++	struct cache_ext_list *list_ptr = cache_ext_ds_registry_get(
++		cache_ext_ds_registry_from_folio(folio), list);
++	if (!list_ptr)
++		return -1;
++
++	return cache_ext_list_move(list_ptr, folio, tail);
++};
++
++__bpf_kfunc int bpf_cache_ext_list_del(struct folio *folio)
++{
++	return cache_ext_list_del(folio);
++};
++
++__bpf_kfunc int bpf_cache_ext_list_iterate(
++	struct mem_cgroup *memcg, u64 list,
++	int(iter_fn)(int idx, struct cache_ext_list_node *node),
++	struct page_cache_ext_eviction_ctx *ctx)
++{
++	struct cache_ext_ds_registry *registry = cache_ext_ds_registry_from_memcg(memcg);
++	struct cache_ext_list *list_ptr = cache_ext_ds_registry_get(registry, list);
++
++	if (!list_ptr)
++		return -1;
++
++	return cache_ext_list_iterate(memcg, list_ptr, (void *)iter_fn, ctx);
++};
++
++__bpf_kfunc int bpf_cache_ext_list_iterate_extended(
++	struct mem_cgroup *memcg, u64 list,
++	int(iter_fn)(int idx, struct cache_ext_list_node *node),
++	struct cache_ext_iterate_opts *opts,
++	struct page_cache_ext_eviction_ctx *ctx)
++{
++	if (!opts)
++		return -1;
++
++	struct cache_ext_ds_registry *registry = cache_ext_ds_registry_from_memcg(memcg);
++	struct cache_ext_list *list_ptr = cache_ext_ds_registry_get(registry, list);
++
++	if (!list_ptr)
++		return -1;
++
++	return cache_ext_list_iterate_extended(memcg, list_ptr, (void *)iter_fn, opts, ctx);
++};
++
++#define MAX_SAMPLE_FOLIOS 2048
++DEFINE_PER_CPU(struct cache_ext_list_node *, sample_folios[MAX_SAMPLE_FOLIOS]);
++
++void __putback_list_nodes(struct cache_ext_list *list, struct cache_ext_list_node **sample_folios_arr, int size)
++{
++	for (int i = 0; i < size; i++) {
++		// HACK: Check if either left or right pointer is poisoned
++		if (sample_folios_arr[i]->node.next == LIST_POISON1 ||
++			sample_folios_arr[i]->node.next == LIST_POISON2 ||
++			sample_folios_arr[i]->node.prev == LIST_POISON1 ||
++			sample_folios_arr[i]->node.prev == LIST_POISON2) {
++			pr_warn("cache_ext: folio removed from page cache while isolated by sampling\n");
++			continue;
++		}
++		list_add_tail(&sample_folios_arr[i]->node, &list->head);
++	}
++}
++
++int __bpf_cache_ext_list_sample(struct mem_cgroup *memcg, u64 list,
++				s64(score_fn)(struct cache_ext_list_node *a),
++				struct sampling_options *opts,
++				struct page_cache_ext_eviction_ctx *ctx)
++{
++	// Select the first select_size elements with the lowest score out of
++	// sample_size elements in the given list.
++	int sample_size = opts->sample_size;
++	int num_folios_to_sample = ctx->request_nr_folios_to_evict * sample_size;
++
++	if (num_folios_to_sample > MAX_SAMPLE_FOLIOS) {
++		pr_warn("cache_ext: num_folios_to_sample is too large\n");
++		return -1;
++	}
++	int sample_folios_size = 0;
++	struct cache_ext_list_node **sample_folios_arr = this_cpu_ptr(sample_folios);
++
++	struct cache_ext_ds_registry *registry = cache_ext_ds_registry_from_memcg(memcg);
++	struct cache_ext_list *list_ptr = cache_ext_ds_registry_get(registry, list);
++
++	if (!list_ptr) {
++		pr_err("cache_ext: list is NULL\n");
++		return -1;
++	}
++	write_lock(&registry->lock);
++
++	// Optimization: Snip the front of the list and select the pages without
++	// holding the lock.
++	for (int i = 0; i < num_folios_to_sample; i++) {
++		if (list_empty(&list_ptr->head)) {
++			pr_warn("cache_ext: ran out of folios to sample\n");
++			__putback_list_nodes(list_ptr, sample_folios_arr, sample_folios_size);
++			write_unlock(&registry->lock);
++			return -1;
++		}
++		struct cache_ext_list_node *node = list_first_entry(
++			&list_ptr->head, struct cache_ext_list_node, node);
++		sample_folios_arr[i] = node;
++		sample_folios_size++;
++		// if (node->node.next == NULL || node->node.prev == NULL) {
++		//	pr_warn("cache_ext: node->node.next or node->node.prev is NULL\n");
++		// }
++		list_del_init(&node->node);
++	}
++
++	write_unlock(&registry->lock);
++
++	// 1. For every n elements, evict the one with the min score
++	ctx->nr_folios_to_evict = 0;
++	int sample_folios_idx = 0;
++
++	for (int i = 0; i < ctx->request_nr_folios_to_evict; i++) {
++		struct cache_ext_list_node *min_node = sample_folios_arr[sample_folios_idx];
++		s64 min_score = score_fn(min_node);
++
++		sample_folios_idx++;
++
++		// if (!min_node) {
++		//	pr_warn("cache_ext: min_node is NULL, ran out of folios to evict\n");
++		//	break;
++		// }
++
++		for (int j = 1; j < sample_size; j++) {
++			struct cache_ext_list_node *curr_node = sample_folios_arr[sample_folios_idx];
++			s64 curr_score = score_fn(curr_node);
++
++			sample_folios_idx++;
++			if (curr_score < min_score) {
++				min_score = curr_score;
++				min_node = curr_node;
++			}
++		}
++		// min_node must be non-NULL here
++		ctx->folios_to_evict[ctx->nr_folios_to_evict] = min_node->folio;
++		ctx->scores[ctx->nr_folios_to_evict] = min_score;
++		ctx->nr_folios_to_evict++;
++	}
++
++	// 2. Put everything to the back of the list.
++	write_lock(&registry->lock);
++	__putback_list_nodes(list_ptr, sample_folios_arr, sample_folios_size);
++	write_unlock(&registry->lock);
++
++	return 0;
++}
++
++__bpf_kfunc int
++bpf_cache_ext_list_sample(struct mem_cgroup *memcg, u64 list,
++			  s64(score_fn)(struct cache_ext_list_node *a),
++			  struct sampling_options *opts,
++			  struct page_cache_ext_eviction_ctx *ctx)
++{
++		scoped_guard(preempt) {
++			return __bpf_cache_ext_list_sample(memcg, list, score_fn, opts, ctx);
++		}
++		BUG();
++}
++
++enum cache_ext_list_ops_type {
++	KF_bpf_cache_ext_list_add,
++	KF_bpf_cache_ext_list_add_tail,
++	KF_bpf_cache_ext_list_del,
++	KF_bpf_cache_ext_list_iterate,
++	KF_bpf_cache_ext_list_sample,
++	KF_bpf_cache_ext_list_move,
++	KF_bpf_cache_ext_list_iterate_extended,
++};
++
++BTF_KFUNCS_START(cache_ext_list_ops)
++BTF_ID_FLAGS(func, bpf_cache_ext_list_add)
++BTF_ID_FLAGS(func, bpf_cache_ext_list_add_tail)
++BTF_ID_FLAGS(func, bpf_cache_ext_list_del)
++BTF_ID_FLAGS(func, bpf_cache_ext_list_iterate)
++BTF_ID_FLAGS(func, bpf_cache_ext_list_sample)
++BTF_ID_FLAGS(func, bpf_cache_ext_list_move)
++BTF_ID_FLAGS(func, bpf_cache_ext_list_iterate_extended)
++BTF_KFUNCS_END(cache_ext_list_ops)
++
++BTF_ID_LIST(cache_ext_list_ops_list)
++BTF_ID(func, bpf_cache_ext_list_add)
++BTF_ID(func, bpf_cache_ext_list_add_tail)
++BTF_ID(func, bpf_cache_ext_list_del)
++BTF_ID(func, bpf_cache_ext_list_iterate)
++BTF_ID(func, bpf_cache_ext_list_sample)
++BTF_ID(func, bpf_cache_ext_list_move)
++BTF_ID(func, bpf_cache_ext_list_iterate_extended)
++
++noinline bool cache_ext_is_callback_calling_kfunc_iterate(u32 btf_id)
++{
++	return (btf_id == cache_ext_list_ops_list[KF_bpf_cache_ext_list_iterate] ||
++		btf_id == cache_ext_list_ops_list[KF_bpf_cache_ext_list_iterate_extended]);
++}
++
++noinline bool cache_ext_is_callback_calling_kfunc_sample(u32 btf_id)
++{
++	return (btf_id == cache_ext_list_ops_list[KF_bpf_cache_ext_list_sample]);
++}
++
++static const struct btf_kfunc_id_set cache_ext_kfunc_set_list_ops = {
++	.owner = THIS_MODULE,
++	.set = &cache_ext_list_ops,
++};
++
++/******************************************************************************
++ * DS Registry ****************************************************************
++ *****************************************************************************/
++
++void cache_ext_ds_registry_init(struct cache_ext_ds_registry *registry)
++{
++	hash_init(registry->ds_hash);
++	rwlock_init(&registry->lock);
++	registry->nr_entries = 0;
++}
++
++struct cache_ext_ds_registry *
++cache_ext_ds_registry_from_memcg(struct mem_cgroup *memcg)
++{
++	return memcg->nodeinfo[0]->cache_ext_ds_registry;
++}
++
++struct cache_ext_list *cache_ext_ds_registry_new_list(struct mem_cgroup *memcg)
++{
++	struct cache_ext_ds_registry *registry = cache_ext_ds_registry_from_memcg(memcg);
++	struct cache_ext_list *list = cache_ext_list_alloc();
++
++	if (list == NULL) {
++		return NULL;
++	}
++	write_lock(&registry->lock);
++	if (registry->nr_entries >= CACHE_EXT_REGISTRY_MAX_ENTRIES) {
++		write_unlock(&registry->lock);
++		cache_ext_list_free(list);
++		return NULL;
++	}
++	u64 key = (u64)list;
++
++	hash_add(registry->ds_hash, &list->h_node, key);
++	registry->nr_entries++;
++	write_unlock(&registry->lock);
++
++	return list;
++}
++
++struct cache_ext_list *
++cache_ext_ds_registry_get(struct cache_ext_ds_registry *registry, u64 list_ptr)
++{
++	struct cache_ext_list *cur_list;
++	u64 key = list_ptr;
++
++	read_lock(&registry->lock);
++	hash_for_each_possible(registry->ds_hash, cur_list, h_node, key) {
++		if (key == (u64)cur_list) {
++			read_unlock(&registry->lock);
++			return cur_list;
++		}
++	}
++	read_unlock(&registry->lock);
++
++	return NULL;
++}
++
++struct cache_ext_ds_registry *
++cache_ext_ds_registry_from_folio(struct folio *folio)
++{
++	// Get cgroup from folio
++	struct mem_cgroup *memcg = folio_memcg(folio);
++	// Get pgdat from folio
++	pg_data_t *pgdat = folio_pgdat(folio);
++	// Get node cgroup
++	struct mem_cgroup_per_node *node_cgroup = memcg->nodeinfo[pgdat->node_id];
++	// Get valid folios set from cgroup
++	return node_cgroup->cache_ext_ds_registry;
++}
++
++struct cache_ext_ds_registry *
++cache_ext_ds_registry_from_mem_cgroup(struct mem_cgroup *memcg)
++{
++	return memcg->nodeinfo[0]->cache_ext_ds_registry;
++}
++
++void cache_ext_ds_registry_read_lock(struct folio *folio)
++{
++	struct cache_ext_ds_registry *registry = cache_ext_ds_registry_from_folio(folio);
++
++	read_lock(&registry->lock);
++}
++
++void cache_ext_ds_registry_read_unlock(struct folio *folio)
++{
++	struct cache_ext_ds_registry *registry = cache_ext_ds_registry_from_folio(folio);
++
++	read_unlock(&registry->lock);
++}
++
++void cache_ext_ds_registry_write_lock(struct folio *folio)
++{
++	struct cache_ext_ds_registry *registry = cache_ext_ds_registry_from_folio(folio);
++
++	write_lock(&registry->lock);
++}
++
++void cache_ext_ds_registry_write_unlock(struct folio *folio)
++{
++	struct cache_ext_ds_registry *registry = cache_ext_ds_registry_from_folio(folio);
++
++	write_unlock(&registry->lock);
++}
++
++void cache_ext_ds_registry_del_all(struct mem_cgroup *memcg)
++{
++	int bkt;
++	struct hlist_node *tmp;
++	struct cache_ext_list *cur_list;
++	struct cache_ext_ds_registry *registry = cache_ext_ds_registry_from_memcg(memcg);
++
++	write_lock(&registry->lock);
++	hash_for_each_safe(registry->ds_hash, bkt, tmp, cur_list, h_node) {
++		hash_del(&cur_list->h_node);
++		cache_ext_list_free(cur_list);
++	}
++	registry->nr_entries = 0;
++	write_unlock(&registry->lock);
++	struct valid_folios_set *valid_folios_set = memcg_to_valid_folios_set(memcg);
++
++	valid_folios_clear_list(valid_folios_set);
++}
++
++// BPF API
++
++__bpf_kfunc u64 bpf_cache_ext_ds_registry_new_list(struct mem_cgroup *memcg)
++{
++	return (u64)cache_ext_ds_registry_new_list(memcg);
++}
++
++BTF_KFUNCS_START(cache_ext_registry_ops)
++BTF_ID_FLAGS(func, bpf_cache_ext_ds_registry_new_list, KF_SLEEPABLE)
++BTF_KFUNCS_END(cache_ext_registry_ops)
++
++static const struct btf_kfunc_id_set cache_ext_kfunc_set_registry_ops = {
++	.owner = THIS_MODULE,
++	.set = &cache_ext_registry_ops,
++};
++
++static int __init register_cache_ext_kfuncs(void)
++{
++	int ret;
++
++	if ((ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_STRUCT_OPS,
++					     &cache_ext_kfunc_set_list_ops)) ||
++	    (ret = register_btf_kfunc_id_set(
++		     BPF_PROG_TYPE_STRUCT_OPS,
++		     &cache_ext_kfunc_set_registry_ops))) {
++		pr_err("cache_ext: failed to register kfunc sets (%d)\n", ret);
++		return ret;
++	}
++	pr_info("version string lalakis1\n");
++
++	pr_info("BTF IDs:\n");
++	for (int i = 0; i < cache_ext_list_ops.cnt; i++) {
++		pr_info("%d: %d\n", i, cache_ext_list_ops.pairs[i].id);
++	}
++	return 0;
++}
++
++__initcall(register_cache_ext_kfuncs);
+diff --git a/mm/readahead.c b/mm/readahead.c
+index 558c92957..b2c09ec26 100644
+--- a/mm/readahead.c
++++ b/mm/readahead.c
+@@ -131,6 +131,9 @@
+ 
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/readahead.h>
++#undef CREATE_TRACE_POINTS
++
++#include <trace/events/filemap.h>
+ 
+ #include "internal.h"
+ 
+@@ -300,6 +303,7 @@ void page_cache_ra_unbounded(struct readahead_control *ractl,
+ 			i = ractl->_index - index;
+ 			continue;
+ 		}
++		trace_mm_filemap_add_to_page_cache_prefetch(folio);
+ 		if (i == mark)
+ 			folio_set_readahead(folio);
+ 		ractl->_workingset |= folio_test_workingset(folio);
+@@ -472,6 +476,7 @@ static inline int ra_alloc_folio(struct readahead_control *ractl, pgoff_t index,
+ 		folio_put(folio);
+ 		return err;
+ 	}
++	trace_mm_filemap_add_to_page_cache_prefetch(folio);
+ 
+ 	ractl->_nr_pages += 1UL << order;
+ 	ractl->_workingset |= folio_test_workingset(folio);
+@@ -817,6 +822,7 @@ void readahead_expand(struct readahead_control *ractl,
+ 			folio_put(folio);
+ 			return;
+ 		}
++		trace_mm_filemap_add_to_page_cache_prefetch(folio);
+ 		if (unlikely(folio_test_workingset(folio)) &&
+ 				!ractl->_workingset) {
+ 			ractl->_workingset = true;
+@@ -846,6 +852,7 @@ void readahead_expand(struct readahead_control *ractl,
+ 			folio_put(folio);
+ 			return;
+ 		}
++		trace_mm_filemap_add_to_page_cache_prefetch(folio);
+ 		if (unlikely(folio_test_workingset(folio)) &&
+ 				!ractl->_workingset) {
+ 			ractl->_workingset = true;
+diff --git a/mm/swap.c b/mm/swap.c
+index 588f50d8f..2693bf3b0 100644
+--- a/mm/swap.c
++++ b/mm/swap.c
+@@ -39,6 +39,7 @@
+ #include <linux/buffer_head.h>
+ 
+ #include "internal.h"
++#include "page_cache_ext.h"
+ 
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/pagemap.h>
+@@ -495,6 +496,13 @@ static bool lru_gen_clear_refs(struct folio *folio)
+  */
+ void folio_mark_accessed(struct folio *folio)
+ {
++	/* page_cache_ext: folio_accessed hook */
++	struct mem_cgroup *memcg;
++	memcg = folio_memcg(folio);
++	struct page_cache_ext_ops *pcext_ops = get_page_cache_ext_ops(memcg);
++	if (pcext_ops != NULL && pcext_ops->folio_accessed != NULL)
++		pcext_ops->folio_accessed(folio);
++
+ 	if (folio_test_dropbehind(folio))
+ 		return;
+ 	if (lru_gen_enabled()) {
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 6a56aadde..d2a4e8d83 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -12,6 +12,7 @@
+ 
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
++#include <linux/mm_types.h>
+ #include <linux/mm.h>
+ #include <linux/sched/mm.h>
+ #include <linux/module.h>
+@@ -56,6 +57,7 @@
+ #include <linux/khugepaged.h>
+ #include <linux/rculist_nulls.h>
+ #include <linux/random.h>
++#include <linux/hashtable.h>
+ #include <linux/mmu_notifier.h>
+ #include <linux/parser.h>
+ 
+@@ -67,9 +69,11 @@
+ 
+ #include "internal.h"
+ #include "swap.h"
++#include "page_cache_ext.h"
+ 
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/vmscan.h>
++#include <linux/bpf.h>
+ 
+ struct scan_control {
+ 	/* How many pages shrink_list() should reclaim */
+@@ -2005,7 +2009,7 @@ static void handle_reclaim_writeback(unsigned long nr_taken,
+  * shrink_inactive_list() is a helper for shrink_node().  It returns the number
+  * of reclaimed pages
+  */
+-static unsigned long shrink_inactive_list(unsigned long nr_to_scan,
++static noinline unsigned long shrink_inactive_list(unsigned long nr_to_scan,
+ 		struct lruvec *lruvec, struct scan_control *sc,
+ 		enum lru_list lru)
+ {
+@@ -2234,7 +2238,7 @@ unsigned long reclaim_pages(struct list_head *folio_list)
+ 	return nr_reclaimed;
+ }
+ 
+-static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
++static noinline unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
+ 				 struct lruvec *lruvec, struct scan_control *sc)
+ {
+ 	if (is_active_lru(lru)) {
+@@ -2803,7 +2807,7 @@ static bool should_clear_pmd_young(void)
+ #define get_memcg_gen(seq)	((seq) % MEMCG_NR_GENS)
+ #define get_memcg_bin(bin)	((bin) % MEMCG_NR_BINS)
+ 
+-static struct lruvec *get_lruvec(struct mem_cgroup *memcg, int nid)
++static noinline struct lruvec *get_lruvec(struct mem_cgroup *memcg, int nid)
+ {
+ 	struct pglist_data *pgdat = NODE_DATA(nid);
+ 
+@@ -6018,6 +6022,127 @@ static void lru_gen_shrink_node(struct pglist_data *pgdat, struct scan_control *
+ 
+ #endif /* CONFIG_LRU_GEN */
+ 
++/******************************************************************************
++ * page_cache_ext *************************************************************
++ *****************************************************************************/
++
++static bool page_cache_ext_isolate_folio(struct folio *folio) {
++	struct lruvec *lruvec;
++	enum lru_list lru;
++
++	if (folio_test_unevictable(folio)) {
++		pr_debug("cache_ext: Failed to isolate because unevictable\n");
++		return false;
++	}
++
++	/* raced with release_pages() */
++	if (!folio_try_get(folio)){
++		pr_debug("cache_ext: Failed to isolate because try_get failed\n");
++		return false;
++	}
++
++	/* raced with another isolation */
++	if (!folio_test_clear_lru(folio)) {
++		pr_debug("cache_ext: Failed to isolate because clear_lru failed\n");
++		folio_put(folio);
++		return false;
++	}
++
++	lruvec = folio_lruvec_lock_irq(folio);
++
++	// What list was this folio in? Find out from the page flags.
++	if (folio_test_anon(folio)) {
++		if (folio_test_active(folio)) {
++			lru = LRU_ACTIVE_ANON;
++		} else {
++			lru = LRU_INACTIVE_ANON;
++		}
++	} else {
++		if (folio_test_active(folio)) {
++			lru = LRU_ACTIVE_FILE;
++		} else {
++			lru = LRU_INACTIVE_FILE;
++		}
++	}
++
++	/* remove from list */
++	list_del(&folio->lru);
++	// TODO: Update lru size
++	long nr_pages = folio_nr_pages(folio);
++	update_lru_size(lruvec, lru, folio_zonenum(folio), -nr_pages);
++	lruvec_unlock_irq(lruvec);
++	return true;
++}
++
++static unsigned long __page_cache_ext_isolate_and_reclaim(struct lruvec *lruvec,
++	long request_nr_to_evict, struct page_cache_ext_ops *pcext_ops) {
++
++	int ret = 0;
++	LIST_HEAD(free_folios);
++	unsigned long nr_reclaimed = 0, nr_reclaimed_for_batch = 0;
++	struct page_cache_ext_eviction_ctx ctx;
++	pr_debug("page_cache_ext: Trying to evict %lu pages\n", request_nr_to_evict);
++	for (long request_nr_to_evict_batch = min((long)32, request_nr_to_evict);
++	     request_nr_to_evict > 0;
++		 request_nr_to_evict -= 32) {
++
++		memset(&ctx, 0, sizeof(ctx));
++		ctx.request_nr_folios_to_evict = request_nr_to_evict_batch;
++		pcext_ops->evict_folios(&ctx, lruvec_memcg(lruvec));
++		if (ctx.nr_folios_to_evict > ARRAY_SIZE(ctx.folios_to_evict)) {
++			pr_debug("page_cache_ext: nr_folios_evicted bigger than array size!\n");
++			ret = 0;
++			goto free;
++		}
++		if (ctx.nr_folios_to_evict == 0) {
++			pr_debug_ratelimited("page_cache_ext: No pages to evict, nr_folios_to_evict == 0!\n");
++		}
++		if (ctx.nr_folios_to_evict != request_nr_to_evict_batch) {
++			pr_debug("page_cache_ext: nr_folios_returned_for_eviction(%lu) != nr_folios_requested_for_eviction(%lu)!\n",
++				ctx.nr_folios_to_evict, request_nr_to_evict_batch);
++		}
++		for (int i = 0; i < ctx.nr_folios_to_evict; i++) {
++			struct folio *untrusted_folio_ptr = ctx.folios_to_evict[i];
++			if (!valid_folios_exists_unlocked(lruvec_to_valid_folios_set(lruvec), untrusted_folio_ptr)) {
++				pr_debug("page_cache_ext: Folio not in valid_folios_set: %p!\n", untrusted_folio_ptr);
++				continue;
++			}
++			// Isolate page
++			if (!page_cache_ext_isolate_folio(untrusted_folio_ptr)) {
++				pr_debug("page_cache_ext: Failed to isolate folio: %p\n", untrusted_folio_ptr);
++				continue;
++			}
++			// Free isolated folios
++			list_add(&untrusted_folio_ptr->lru, &free_folios);
++		}
++		// TODO: Repurposing this damon function for now. Is it enough?
++		nr_reclaimed_for_batch = reclaim_pages(&free_folios);
++		if (nr_reclaimed_for_batch != ctx.nr_folios_to_evict) {
++			pr_debug("page_cache_ext: nr_reclaimed(%lu) != request_nr_to_evict(%lu)!\n", nr_reclaimed_for_batch, ctx.nr_folios_to_evict);
++		}
++		nr_reclaimed += nr_reclaimed_for_batch;
++	}
++
++	pr_debug("page_cache_ext: Reclaimed %lu pages\n", nr_reclaimed);
++	// TODO: Add some watchdog mechanism. If the hook is not performing adequetely, skip it.
++free:
++	return nr_reclaimed;
++}
++
++static noinline unsigned long page_cache_ext_isolate_and_reclaim(struct lruvec *lruvec,
++								   unsigned long nr_to_evict)
++{
++	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
++	struct page_cache_ext_ops *pcext_ops = get_page_cache_ext_ops(memcg);
++	if (pcext_ops != NULL && pcext_ops->evict_folios != NULL) {
++		return __page_cache_ext_isolate_and_reclaim(lruvec, nr_to_evict, pcext_ops);
++	}
++	return 0;
++}
++
++
++/*****************************************************************************/
++
+ static void shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ {
+ 	unsigned long nr[NR_LRU_LISTS];
+@@ -6057,6 +6182,52 @@ static void shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 				sc->priority == DEF_PRIORITY);
+ 
+ 	blk_start_plug(&plug);
++
++	/*
++	 * Page cache extension
++	 */
++	{
++	unsigned long nr_to_evict = nr[LRU_INACTIVE_FILE];
++	nr_reclaimed += page_cache_ext_isolate_and_reclaim(lruvec, nr_to_evict);
++	if (nr_reclaimed > nr[LRU_INACTIVE_FILE]) {
++		nr[LRU_INACTIVE_FILE] = 0;
++	} else {
++		nr[LRU_INACTIVE_FILE] -= nr_reclaimed;
++	}
++
++	// TODO: nr[LRU_INACTIVE_FILE] is actually the number of pages to scan, not
++	// the number of pages to evict. Might need to fix this in the future.
++	if (nr[LRU_INACTIVE_FILE] > 1500) {
++		pr_debug("cache_ext: Got a lot of pages to evict: %lu. Is that normal?\n",
++			nr[LRU_INACTIVE_FILE]);
++	}
++	// If we more or less evicted all the pages we wanted, exit.
++	// Assumptions:
++	// - No swap.
++	// - Unmaintained active list is ok.
++
++	unsigned long long threshold_pct = 80;
++	unsigned long long reclaim_pct = 0;
++	if (nr_to_evict > 0) {
++		reclaim_pct = 100 * nr_reclaimed / nr_to_evict;
++	} else {
++		pr_debug("cache_ext: nr_to_evict is 0. Setting reclaim_pct to 100\n");
++		reclaim_pct = 100;
++	};
++	// TODO: Check the nr_reclaimed is less than nr_to_evict
++	sc->nr_reclaimed += nr_reclaimed;
++	sc->nr_scanned += nr_reclaimed;
++	if (reclaim_pct > threshold_pct) {
++		// pr_debug("Reclaimed more than %llu%% of the pages we wanted to evict. Finishing reclaim.\n", threshold_pct);
++		blk_finish_plug(&plug);
++		return;
++	} else {
++		pr_debug("Reclaimed less than %llu%% (%llu) of the pages we wanted to evict. Reclaiming more.\n",
++			 threshold_pct, reclaim_pct);
++	}
++	}
++	/***********************************************************************/
++
+ 	while (nr[LRU_INACTIVE_ANON] || nr[LRU_ACTIVE_FILE] ||
+ 					nr[LRU_INACTIVE_FILE]) {
+ 		unsigned long nr_anon, nr_file, percentage;

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from pathlib import Path
 
 from ..util import log
@@ -26,12 +27,56 @@ def _read_series(series_file: Path) -> list[Path]:
     return patches
 
 
+def _target_series_version(ctx) -> str | None:
+    """major.minor of the kernel actually being patched, e.g. "7.2".
+
+    Read off ctx.source_dir first (build/linux-7.2 → 7.2) because that is the
+    tree `git am` will run in — it is the only value that cannot disagree with
+    reality. --target is the fallback, for a --dry-run before source has run.
+    """
+    src = getattr(ctx, "source_dir", None)
+    if src:
+        m = re.match(r"linux-(\d+)\.(\d+)", Path(src).name)
+        if m:
+            return f"{m.group(1)}.{m.group(2)}"
+    target = getattr(getattr(ctx, "args", None), "target", None)
+    if target:
+        m = re.match(r"(\d+)\.(\d+)", str(target))
+        if m:
+            return f"{m.group(1)}.{m.group(2)}"
+    return None
+
+
 def _series_file_for(repo_root: Path, source_mode: str, ctx=None) -> Path:
     # ctx may override series dir (e.g. source phase resolved xanmod vs kernel-org)
     if ctx is not None and hasattr(ctx, "patch_series_dir") and ctx.patch_series_dir:
         return ctx.patch_series_dir / "series"
+
     if source_mode == "kernel-org":
-        return repo_root / "patches" / "kernel-org-7.1" / "series"
+        # The series directory follows the kernel being built. It used to be
+        # hardcoded to kernel-org-7.1, which was correct for exactly as long as
+        # 7.1 was the only target anyone passed. `--target 7.2` would have
+        # applied the 7.1 series against a 7.2 tree and said nothing about it —
+        # every patch would still `git am --3way` or not on its own merits, and
+        # the run would look completely normal.
+        version = _target_series_version(ctx)
+        if version:
+            d = repo_root / "patches" / f"kernel-org-{version}"
+            if d.is_dir():
+                return d / "series"
+            raise SystemExit(
+                f"no patch series for kernel {version}: expected {d}/series.\n"
+                f"Create it (and patches/VENDOR-kernel-org-{version}.lock) before "
+                f"building this target — falling back to another version's series "
+                f"would apply patches written for a different tree."
+            )
+        # No source_dir and no --target: cannot tell what is being built, so
+        # do not guess a version directory.
+        raise SystemExit(
+            "cannot determine the kernel version to pick a patch series for. "
+            "Run `python -m hyphaed --phase source` first, or pass --target."
+        )
+
     if source_mode == "xanmod":
         return repo_root / "patches" / "xanmod-7.1" / "series"
     return repo_root / "patches" / "series"

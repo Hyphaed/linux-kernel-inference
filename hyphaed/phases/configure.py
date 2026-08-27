@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import re
 from pathlib import Path
 
 from rich.markup import escape
@@ -394,7 +395,20 @@ def run_phase(ctx) -> Path:
     # the GreenBoost floor or our hard requirements.
     log.info("validating .config against floor requirements")
     parsed = kconfig.parse_config(target_config)
-    result = kconfig.validate(parsed, with_greenboost=ctx.profile.has_greenboost, cpu_vendor=ctx.profile.cpu_vendor)
+    # The kernel version matters to validation: a floor symbol upstream has
+    # since deleted must not read as a broken fragment. Taken off the source
+    # tree name, which is the tree that produced this .config.
+    kver = None
+    if getattr(ctx, "source_dir", None):
+        m = re.match(r"linux-(\d+(?:\.\d+)*)", Path(ctx.source_dir).name)
+        if m:
+            kver = m.group(1)
+    result = kconfig.validate(
+        parsed,
+        with_greenboost=ctx.profile.has_greenboost,
+        cpu_vendor=ctx.profile.cpu_vendor,
+        kernel_version=kver,
+    )
     if result.missing or result.forbidden:
         for m in result.missing:
             log.err(f"  missing: {m}")
