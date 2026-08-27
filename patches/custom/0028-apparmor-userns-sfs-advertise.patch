@@ -27,10 +27,10 @@ expects. Advertisement only -- no enforcement path changes, so this
 carries no behavior change beyond letting the boot script stop overriding
 the sysctl. Compiled clean: security/apparmor/apparmorfs.o.
 
-Not John Johansen's work -- ours, addressing a gap his port left. No
-Signed-off-by (local-only carry, not submitted upstream).
+Not John Johansen's work -- ours, addressing a gap his port left.
 
 Assisted-by: Claude:claude-opus-5
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
 ---
  security/apparmor/apparmorfs.c | 1 +
  1 file changed, 1 insertion(+)

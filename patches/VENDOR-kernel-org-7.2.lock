@@ -74,4 +74,4 @@
 # both kfunc sets still use BTF_KFUNCS_START/END, and 7.2's
 # register_btf_kfunc_id_set() still rejects a set without BTF_SET8_KFUNCS
 # (kernel/bpf/btf.c:9190; it was :9004 on 7.1). Still correct, still required.
-../custom/0028-apparmor-userns-sfs-advertise.patch          file://$KI_ROOT/patches/custom/0028-apparmor-userns-sfs-advertise.patch          0987cedfa96b6932d9c5df3766e0dc04094c74c997850bb5fb834ada17822ecc  local-file
+../custom/0028-apparmor-userns-sfs-advertise.patch          file://$KI_ROOT/patches/custom/0028-apparmor-userns-sfs-advertise.patch          d2a0a34d36edf5071bd29a224b1ecdec029c4285bb4f0d9964044b3065f3af05  local-file
