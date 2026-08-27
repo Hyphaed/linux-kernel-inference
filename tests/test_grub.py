@@ -83,11 +83,12 @@ def test_compose_cmdline_desktop_nvidia_disables_aspm():
     """`pcie_aspm=off` tells the kernel not to touch ASPM, leaving whatever the
     BIOS programmed in place. Verified live 2026-08-18 while booted with `off`:
     policy read `[default]` and the GPU reported `LnkCtl: ASPM L1 Enabled`.
-    `performance` is the value that actually disables it, which is what the
-    lowest-latency intent needs on a PCIe-transfer-bound box."""
+    `pcie_aspm.policy=performance` is the value that actually disables it (the
+    bare `pcie_aspm=performance` tried first only accepts {off,force} and is
+    silently dropped) — verified live 2026-08-25, same `[default]` symptom."""
     p = _profile()
     tokens = grub.compose_cmdline(p)
-    assert "pcie_aspm=performance" in tokens
+    assert "pcie_aspm.policy=performance" in tokens
     assert "pcie_aspm=off" not in tokens
 
 
@@ -97,7 +98,7 @@ def test_compose_cmdline_laptop_keeps_firmware_aspm():
     p = _profile(chassis="laptop")
     tokens = grub.compose_cmdline(p)
     assert "pcie_aspm=off" in tokens
-    assert "pcie_aspm=performance" not in tokens
+    assert "pcie_aspm.policy=performance" not in tokens
 
 
 def test_compose_cmdline_non_nvidia_skips_gpu_perf():

@@ -93,7 +93,7 @@ CMDLINE_NVIDIA_WAYLAND = [
 #
 #   pcie_aspm=off          kernel does not touch ASPM at all. Whatever the
 #                          BIOS programmed stays programmed.
-#   pcie_aspm=performance  kernel actively DISABLES ASPM on every link.
+#   pcie_aspm.policy=performance  kernel actively DISABLES ASPM on every link.
 #
 # Verified live on this box while running with `pcie_aspm=off` on the
 # cmdline: /sys/module/pcie_aspm/parameters/policy reads `[default]`, not
@@ -103,6 +103,17 @@ CMDLINE_NVIDIA_WAYLAND = [
 # The project notes called this combination "confirmed optimal"; it was never
 # confirmed, it was assumed from the option's name.
 #
+# 2026-08-25: the first fix landed `pcie_aspm=performance`, same bug one level
+# deeper. `pcie_aspm=` (drivers/pci/pcie/aspm.c early_param) only recognizes
+# {off,force} per Documentation/admin-guide/kernel-parameters.txt — any other
+# value is silently dropped, no warning. The {default,performance,powersave,
+# powersupersave} policy values belong to a SEPARATE parameter,
+# `pcie_aspm.policy=`, registered via `module_param_call(policy, ...)` with
+# `MODULE_PARAM_PREFIX "pcie_aspm."`. Verified live on this box booted with
+# the old `pcie_aspm=performance` on /proc/cmdline: policy still read
+# `[default]`, six kernel builds running with ASPM untouched despite both
+# "fixes" believing they had disabled it.
+#
 # This matters here more than on a general-purpose desktop: decode on this
 # box is ~94% PCIe transfer time, and L1 entry/exit sits on exactly that path
 # (the GPU's own LnkCap advertises "Exit Latency L1 unlimited").
@@ -111,7 +122,7 @@ CMDLINE_NVIDIA_WAYLAND = [
 # which is free on a mains-powered desktop and is not free on machine 2, the
 # Ryzen AI 9 laptop. Laptops keep the firmware default.
 CMDLINE_GPU_PERF_DESKTOP = [
-    "pcie_aspm=performance",
+    "pcie_aspm.policy=performance",
 ]
 CMDLINE_GPU_PERF_LAPTOP = [
     "pcie_aspm=off",
