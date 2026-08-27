@@ -5,6 +5,7 @@ description: |
   All CPU vulnerability mitigations kept ON.
 
 fragments:
+  - 05-ubuntu-26-boot.config   # MUST be first (boot floor)
   - 10-preempt-full.config
   - 11-hz-1000.config
   - 12-scheduler-bore-scx.config

@@ -4,6 +4,7 @@ description: |
   Useful as a fallback when an upstream patch breaks against a new kernel.
 
 fragments:
+  - 05-ubuntu-26-boot.config   # MUST be first (boot floor)
   - 20-mitigations-on.config
   - 30-mm-thp-mglru.config
   - 31-mm-zswap-zstd.config
