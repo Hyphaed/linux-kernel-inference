@@ -85,10 +85,16 @@ def run_phase(ctx) -> Path:
     debs = list(dict.fromkeys(ctx.built_debs or []))
     out = ctx.repo_root / "out" / "debs"
     out.mkdir(parents=True, exist_ok=True)
+    # Non-package artefacts belong one level up. out/debs/ then holds .deb
+    # files and nothing else, so a `dpkg -i *` run from inside it cannot pick
+    # up the manifest or the System.map. It did on 2026-08-25: three
+    # "not a Debian format archive" errors, harmless but indistinguishable at
+    # a glance from a failed kernel install.
+    artefacts = out.parent
 
     if ctx.dry_run and not debs:
         log.info("(dry-run) no .debs to package")
-        return out / "manifest.json"
+        return artefacts / "manifest.json"
 
     _DEB_DESCRIPTIONS = {
         "linux-image":         "kernel image (vmlinuz + .ko modules) — this is what GRUB boots",
@@ -128,12 +134,13 @@ def run_phase(ctx) -> Path:
         "tag": ctx.profile.tag(),
         "packages": moved,
     }
-    manifest_path = out / "manifest.json"
+    manifest_path = artefacts / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
     log.ok(f"manifest → {manifest_path.name}")
     log.console.print(
-        "  [dim]sha256 + size for every .deb; consumed by `hyphaed install` "
-        "to verify packages haven't been corrupted between build and install.[/dim]"
+        "  [dim]sha256 + size for every .deb this run produced. Nothing reads "
+        "it back — the install phase globs linux-*.deb and doesn't checksum "
+        "anything — so it's a record for checking a package by hand.[/dim]"
     )
     ctx.packaged_debs = [out / m["file"] for m in moved]
 
@@ -155,7 +162,7 @@ def run_phase(ctx) -> Path:
         sysmap = ctx.source_dir / "System.map"
         if sysmap.exists():
             pkgver = getattr(ctx, "kernel_pkgver", None) or "unknown"
-            dst = out / f"System.map-{pkgver}"
+            dst = artefacts / f"System.map-{pkgver}"
             shutil.copy2(sysmap, dst)
             log.ok(f"System.map → {dst.name}")
             log.console.print(

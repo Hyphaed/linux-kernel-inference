@@ -3,9 +3,15 @@
 
 PY ?= python3
 
-.PHONY: help detect deps fetch-patches build build-package build-dry install rebase clean list-presets \
-        status verify prune uninstall print-config install-deps test compare scx \
-        snapshot scx-enable scx-disable doctor update-cmdline
+# Keep this in step with the rules below, both ways. A name here with no
+# rule makes `make <name>` print "Nothing to be done" and exit 0 -- that is
+# how `make install` came to silently do nothing (2026-08-26). A rule missing
+# from here breaks the day a file of that name appears in the tree.
+# tests/test_makefile_targets.py checks both directions.
+.PHONY: help detect deps fetch-patches fetch-patches-discover build build-package \
+        build-dry install rebase clean list-presets status verify prune uninstall \
+        print-config install-deps test compare snapshot doctor update-cmdline \
+        scx-install scx-status scx-run scx-stop scx-enable scx-disable
 
 help:
 	@echo "hyphaed kernel wizard targets:"
@@ -79,6 +85,22 @@ build-dry:
 build-package:
 	$(PY) -m hyphaed --phase package
 
+# The other half of build-package. `--phase postinstall` auto-runs its unmet
+# prerequisites in the same process, which after build-package is just
+# install + postinstall: dpkg -i on out/debs/linux-*.deb ONLY, then the
+# idempotent GRUB drop-in, the DKMS autoinstall and the NVIDIA ENDBR/IBT +
+# nvidia-fs smoke checks.
+#
+# This target did not exist until 2026-08-26, and `install` was already in
+# .PHONY above -- so `make install` printed "Nothing to be done for
+# 'install'" and exited 0. A documented command that silently does nothing
+# and reports success is worse than a missing one: CLAUDE.md tells the
+# operator to run `make install` rather than `dpkg -i *`, and 7.1.10 was
+# installed with `dpkg -i *` anyway. Without the .PHONY entry make would at
+# least have said "No rule to make target".
+install:
+	$(PY) -m hyphaed --phase postinstall
+
 rebase:
 	@if [ -z "$(TARGET)" ]; then echo "set TARGET=, e.g. make rebase TARGET=linux-image-7.0.0-16-generic"; exit 1; fi
 	$(PY) -m hyphaed rebase --target $(TARGET)
@@ -136,4 +158,4 @@ test:
 	$(PY) -m pytest tests/ -q
 
 clean:
-	rm -rf build/* out/debs/* out/logs/* state/*.json
+	rm -rf build/* out/debs/* out/logs/* out/manifest.json out/System.map-* state/*.json

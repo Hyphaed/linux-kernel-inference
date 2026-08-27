@@ -219,10 +219,17 @@ def _run_phases(ctx: Ctx, phase_names: list[str]) -> None:
 
 def _cmd_clean(ctx: Ctx) -> int:
     from .util.prompts import confirm
-    targets = [ctx.build_dir, ctx.repo_root / "out" / "debs", ctx.repo_root / "out" / "logs", ctx.state_dir]
+    out = ctx.repo_root / "out"
+    targets = [ctx.build_dir, out / "debs", out / "logs", ctx.state_dir]
+    # The package phase writes these two beside out/debs/ rather than inside
+    # it, so they are files to remove rather than a directory to empty.
+    strays = sorted([out / "manifest.json", *out.glob("System.map-*")])
     log.info("will remove contents of:")
     for t in targets:
         log.console.print(f"  • {t}")
+    for f in strays:
+        if f.exists():
+            log.console.print(f"  • {f}")
     if not confirm("proceed?", default=False):
         return 0
     for t in targets:
@@ -234,6 +241,10 @@ def _cmd_clean(ctx: Ctx) -> int:
             else:
                 child.unlink()
         log.ok(f"cleaned {t}")
+    for f in strays:
+        if f.exists():
+            f.unlink()
+            log.ok(f"removed {f.name}")
     return 0
 
 

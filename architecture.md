@@ -28,7 +28,7 @@ registered in `phases/__init__.py::ORDER` and `MODULES`.
 | `patch` | `ctx.source_dir`, `patches/series`, `VENDOR.lock` | git repo with patches applied; `state/applied-series.json` |
 | `configure` | `ctx.source_dir`, `configs/base/`, `configs/fragments/`, preset | `ctx.source_dir/.config` (final); floor-validated |
 | `build` | `ctx.source_dir`, `ctx.kernel_pkgver` | `.deb` files in `build/` |
-| `package` | `.deb` files | `out/debs/*.deb`, `out/debs/manifest.json` |
+| `package` | `.deb` files | `out/debs/*.deb` (packages only), `out/manifest.json`, `out/System.map-<pkgver>` |
 | `install` | `out/debs/`, GRUB state | installed kernel, `/etc/default/grub.d/90-hyphaed.cfg` |
 | `postinstall` | running kernel, DKMS | DKMS modules rebuilt; smoke-check report |
 
