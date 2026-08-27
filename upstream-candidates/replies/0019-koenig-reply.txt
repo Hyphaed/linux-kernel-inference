@@ -1,0 +1,19 @@
+Thanks, and the FOLL_LONGTERM framing was my error - I should've checked it
+before I wrote it. I'd been treating the pin as an accounting detail rather
+than the thing that makes the buffer un-migratable, and once you look at
+check_and_migrate_movable_pages_or_folios() and what CMA does around it,
+that's obviously not a premise to build UAPI on.
+
+On the in-tree user, that's fair. I said much the same in a follow-up on the
+20th which you may not have seen - there isn't one, the only consumer is my
+own out-of-tree module, and that isn't a reason to take UAPI.
+
+One thing I'd like to understand before dropping it. You mention the
+exporter migrating a buffer between local memory, system memory and swap.
+If this ever did get an in-tree consumer, is that the shape you'd expect -
+something on dma_buf_ops the exporter implements, rather than a hint field
+plus an ioctl? I'd rather hear the direction is wrong than come back later
+with the same idea in different clothes.
+
+Cheers,
+Ferran
