@@ -1,3 +1,6 @@
+From: Ferran Duarri <ferran.duarri@me.com>
+Subject: Re: [RFC PATCH] dma-buf: add a generic reclaim-priority hint
+
 Thanks, and the FOLL_LONGTERM framing was my error - I should've checked it
 before I wrote it. I'd been treating the pin as an accounting detail rather
 than the thing that makes the buffer un-migratable, and once you look at

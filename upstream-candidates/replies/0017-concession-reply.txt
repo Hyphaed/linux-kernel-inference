@@ -1,0 +1,9 @@
+From: Ferran Duarri <ferran.duarri@me.com>
+Subject: Re: [PATCH] kbuild: ubsan: skip UBSAN for external modules by default
+
+Nathan, Nicolas - fair, and it's the right call: making UBSAN weaker for
+everyone to fix one out-of-tree module's problem is a bad trade. Dropping
+this, thanks.
+
+Cheers,
+Ferran

@@ -4,15 +4,41 @@
 
 | Patch | Sent | Lists | Message-ID | Thread |
 |---|---|---|---|---|
-| `0021` PCI/sysfs docs | 2026-08-20 20:42 CEST | linux-pci, linux-api, linux-kernel | `20260820184228.166566-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-pci/20260820184228.166566-1-ferran.duarri@me.com/> |
+| `0021` PCI/sysfs docs (v1) | 2026-08-20 20:42 CEST | linux-pci, linux-api, linux-kernel | `20260820184228.166566-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-pci/20260820184228.166566-1-ferran.duarri@me.com/> |
 | `0017` kbuild UBSAN extmod | 2026-08-20 21:01 CEST | linux-kbuild, linux-kernel | `20260820190200.203185-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-kbuild/20260820190200.203185-1-ferran.duarri@me.com/> |
 | `0016` THP defrag default | 2026-08-20 21:08 CEST | linux-mm, linux-kernel | `20260820190825.221308-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-mm/20260820190825.221308-1-ferran.duarri@me.com/> |
 | `0019` dma-buf priority hint (RFC) | 2026-08-20 21:08 CEST | dri-devel, linux-media, linaro-mm-sig, linux-kernel | `20260820190838.221435-1-ferran.duarri@me.com` | <https://lore.kernel.org/dri-devel/20260820190838.221435-1-ferran.duarri@me.com/> |
+| `0015` nvme APST default | **2026-08-20 21:44 CEST — sent 4x, see correction below** | linux-nvme, linux-kernel | `20260820194417.269110-1-ferran.duarri@me.com` (+3 dupes/resends) | <https://lore.kernel.org/linux-nvme/20260820194417.269110-1-ferran.duarri@me.com/> |
+| `0021` v3 PCI/sysfs docs | 2026-08-21 10:33 CEST | linux-pci, linux-api, linux-kernel | `20260821083353.444300-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-pci/20260821083353.444300-1-ferran.duarri@me.com/> |
 
 All sent with `git send-email` via `smtp.mail.me.com`, SMTP result 250, To: the
-subsystem maintainers with the lists in Cc:. Each moved from `outbox/` to
-`sent/` on send. `0015` is the last of ours still unsent; `0020` is
-deliberately held, and this file explains why further down.
+subsystem maintainers with the lists in Cc:. `0020` is deliberately held, and
+this file explains why further down.
+
+**Correction, 2026-08-31: this table was wrong on two rows for 10 days.** It
+said "0015 is the last of ours still unsent" and never listed v3 of 0021. Both
+were sent — the mailbox is the ground truth, this file was not kept in sync
+with it, the exact failure this file's own v2 postmortem already named once
+("a send is not done until its message-id is in this table" — that rule was
+stated after the first occurrence and not enforced after the second). Real
+timeline, read from the mailbox directly:
+
+* `0021` v1 sent 20:42, v2 sent **twice** (21:53 and 22:03 — Greg KH's "You
+  sent 2 v2 patches 🙁" was correct), v3 sent 2026-08-21 10:33 to Bjorn Helgaas
+  and Ilpo Järvinen, threaded correctly off v1. **No reply to v3 yet** as of
+  2026-08-31 (10 days).
+* `0015` was sent **four times**, unthreaded, all as fresh `[PATCH]` (never
+  versioned `v2`/`v3`) to the same four maintainers + linux-nvme: 21:44, 21:54,
+  22:04 on 2026-08-20, and again 2026-08-28 11:48 — eight days after the first
+  three, still unthreaded. **Alexey Bogoslavsky (SanDisk, wrote the current
+  APST algorithm in 2021) replied 2026-08-27** to the 21:54 copy with a
+  substantive technical objection — see "0015 — the SanDisk reply" below. This
+  reply predates the fourth send, so the fourth send went out to someone who
+  had already told us the direction was wrong. That should not have happened.
+* `0019`'s RFC got a real, unaddressed reply from Christian König (dma-buf
+  co-maintainer) on 2026-08-25, 14:24 CEST — 6 days unanswered as of
+  2026-08-31. A reply is drafted (`replies/0019-koenig-reply.txt`,
+  `replies/0019-koenig-analysis.md`) but was never sent. See below.
 
 `0019` went out as `RFC PATCH` rather than `PATCH`, deliberately: it adds UAPI
 whose only consumer is out-of-tree, and the reply to write is the one that says
@@ -28,7 +54,63 @@ the message-ids rather than fetched. The message-ids themselves come from
 the copy in that mailbox is the delivery evidence. Open the URLs in a normal
 browser to confirm the lists accepted them.
 
-**Two threads already have review on them, and both found real problems.**
+**Four threads have review on them now, not two.** `0016` and `0019` were
+already recorded here. `0015` and `0017` were not — both found real problems,
+added 2026-08-31 after actually reading the mailbox instead of assuming
+silence meant nothing had arrived.
+
+## `0017` , DECLINED 2026-08-21. Maintainer said no, seconded, never answered.
+
+Nathan Chancellor (kbuild maintainer): *"I am open to other opinions but I am
+not inclined to apply this change. If an external module has issues with
+these checks, it should either be fixed or `UBSAN_SANITIZE := n` can be added
+to the module's Makefile, rather than making the default worse for everyone
+else, especially given the importance of UBSAN_BOUNDS."* Nicolas Schier
+seconded: *"Yes, I second that."*
+
+Both maintainers are right on the tradeoff as stated: the patch traded a
+security-hardening default away from *every* external module to fix one
+(VMware's vmnet/vmmon). The narrower fix Nathan named —
+`UBSAN_SANITIZE := n` in VMware's own Makefile — is not ours to write, and
+isn't the point; the point is the kernel's default should not have moved for
+it. No reply has been sent. The honest close here is a one-line concession,
+not a v2 — there is no version of this patch that answers "why should this
+regress UBSAN_BOUNDS for everyone else" differently than Nathan already did.
+
+## `0015` , the SanDisk reply, 2026-08-27 , not yet answered
+
+Alexey Bogoslavsky, SanDisk, who states he wrote NVMe's current APST algorithm
+in 2021, replied with a real technical objection, not a process one:
+
+* Client-device EXLAT/ENLAT figures follow Microsoft's own power-management
+  guidance, and vendors sometimes advertise ps4's latency **higher than its
+  real value on purpose**, specifically so Windows keeps selecting ps3 instead.
+  If that is true of this drive, the patch's own before/after numbers measured
+  a real effect against a knowingly-inflated spec figure — the measurement
+  methodology is not in question, what the spec number *means* is.
+* Transitional energy is not fully captured by the advertised power-state
+  numbers either.
+* His recommendation: Linux should keep tracking the Windows-aligned default,
+  because that is what client hardware is tuned against; a user who genuinely
+  needs the latency bound should disable power management explicitly (the
+  Windows "performance mode" equivalent), not get it as the kernel default.
+  He states some OEMs found a similar change unacceptable before he introduced
+  the current APST algorithm.
+
+This is a domain-authority objection to the patch's actual premise, arrived
+after the patch had already been sent a fourth time. It has had no reply for
+four days as of 2026-08-31. Whether to concede, ask for the OEM precedent he
+references, or defend on the grounds that the 990 EVO Plus measurement stands
+regardless of *why* ps4 is labelled 43ms, is a real technical call this file
+does not make unilaterally.
+
+**Reply sent 2026-08-31 13:17 UTC**, message-id
+`20260831131701.200793-1-ferran.duarri@me.com`, confirmed live on
+`lore.kernel.org/linux-nvme/`. Concedes the EXLAT-inflation point, notes the
+measurement itself still holds regardless of *why* the spec number is what it
+is, asks Alexey for the OEM precedent, and apologizes for the fourth
+duplicate send. No reply yet as of this check.
+
 ## `0016` , WITHDRAWN 2026-08-21. The commit message had the mechanism backwards.
 
 Andrew pointed an AI review at it (sashiko.dev). Its High-severity finding was

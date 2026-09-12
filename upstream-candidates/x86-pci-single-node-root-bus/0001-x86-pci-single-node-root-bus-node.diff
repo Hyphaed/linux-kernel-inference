@@ -1,0 +1,23 @@
+diff --git a/arch/x86/pci/acpi.c b/arch/x86/pci/acpi.c
+index 7cd5388ed..2ae31c3e7 100644
+--- a/arch/x86/pci/acpi.c
++++ b/arch/x86/pci/acpi.c
+@@ -463,6 +463,18 @@ static int pci_acpi_root_get_node(struct acpi_pci_root *root)
+ 	if (node != NUMA_NO_NODE && !node_online(node))
+ 		node = NUMA_NO_NODE;
+ 
++	/*
++	 * Firmware on some consumer boards omits _PXM entirely and the
++	 * hardware fallback above also comes up empty, leaving every PCI
++	 * root bus at NUMA_NO_NODE. On a system with exactly one online
++	 * node that isn't ambiguous: there is only one truthful answer.
++	 * Leaving it at NUMA_NO_NODE instead means every NUMA-aware caller
++	 * (pcibus_to_node(), which nvidia-fs's numa lookup depends on) reads
++	 * "unknown" on hardware that has a perfectly well-defined answer.
++	 */
++	if (node == NUMA_NO_NODE && num_online_nodes() == 1)
++		node = first_online_node;
++
+ 	return node;
+ }
+ 

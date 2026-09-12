@@ -1,0 +1,24 @@
+From: Ferran Duarri <ferran.duarri@me.com>
+Subject: Re: [PATCH] nvme: lower default APST max latency to 25ms
+
+Alexey - thanks, that's a real point I hadn't considered: if EXLAT is
+deliberately inflated to keep Windows on ps3, the 100ms default isn't a bug,
+it's aligned with what vendors actually tuned for.
+
+The measurement itself I think still holds - it's reading what the drive's
+live APST table targets, not just trusting the label, and the wake cost at
+ps4 was real regardless of why 43ms is the number on the tin. But that's a
+different question from whether Linux should default away from it.
+
+What's the OEM precedent you mentioned - did lowering the bound before break
+something specific, or was it more general pushback? Trying to understand if
+this needs to stay a boot-time opt-in (which it already is via
+default_ps_max_latency_us) rather than ever being a compiled default, on any
+hardware.
+
+Also - sorry for the fourth copy of this patch landing in your inbox on the
+28th. That was a bookkeeping failure on my end, not a deliberate re-post; it
+went out after your reply had already arrived and should not have.
+
+Cheers,
+Ferran

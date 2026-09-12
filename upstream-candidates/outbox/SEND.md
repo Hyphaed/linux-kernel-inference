@@ -1,11 +1,16 @@
-# Outbox , one patch and one correction
+# Outbox
 
-`0015` has never been sent. `0021` has, and needs a **v2**: AI review on its
-own thread found the documentation it adds describes the attributes wrongly,
-which checking `pcie_get_speed_cap()` confirmed. Both are here. `0021`, `0017`, `0016` and `0019`
-all went out on 2026-08-20 with SMTP result 250 and now live in `../sent/`;
-their message-ids are in `../SUBMISSION.md`. `0020` is deliberately not here at
-all; same file explains why.
+**Correction, 2026-08-31: this file was wrong.** It said "0015 has never been
+sent" as its opening line. The mailbox shows 0015 was sent four times
+(2026-08-20 three times, then again 2026-08-28), and 0021 v3 was sent
+2026-08-21. Both patches are moved to `../sent/` now; both message-ids and the
+reviewer replies they drew are recorded in `../SUBMISSION.md`. Nothing below
+this point has been re-verified against the mailbox — read `../SUBMISSION.md`
+first for current state before acting on anything below.
+
+`0021`, `0017`, `0016`, `0019`, `0015` and `0021` v3 have all gone out; their
+message-ids are in `../SUBMISSION.md`. `0020` is deliberately not here at all;
+that file explains why.
 
 **Only six of the twenty-one patches in this series are ours.** The other
 fifteen are CachyOS, XanMod, Liquorix and TKG work carried with their original
