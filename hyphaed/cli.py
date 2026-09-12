@@ -54,15 +54,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-y", "--yes", action="store_true", help="auto-accept non-hard prompts")
     p.add_argument("--preset", default="auto", help=f"preset name (default: auto — detected from hardware). Available: {','.join(presets.list_available()) or 'none'}")
     p.add_argument("--phase", choices=phases.ORDER + ["all"], default="all", help="run a single phase (default: all)")
-    # Default target/source-mode as of 2026-08-28: kernel.org 7.2.1 stable —
-    # the version this box actually boots (uname -r == 7.2.1-hyphaed),
-    # validated end-to-end (source fetch -> patch -> configure -> build ->
-    # package -> install, all green, real boot-log audit clean) and covered
-    # by its own series at patches/kernel-org-7.2/. `hyphaed` with NO flags
-    # is meant to be the one good command — bump --target here when a newer
-    # kernel.org stable lands and has been validated the same way, rather
-    # than expecting every invocation to pass it explicitly.
-    p.add_argument("--target", default="7.2.1", help="target kernel.org stable version, e.g. 7.2.1. Bump this default after validating a newer kernel.org stable release, or run `hyphaed list-versions` to see the last 5 releases with dates.")
+    # Default target/source-mode as of 2026-08-28: kernel.org 7.2.2 stable —
+    # released 2026-08-28 with a real fix (inet: frags: strip GSO state
+    # before reassembly, closes an unprivileged local DoS), validated
+    # end-to-end (source fetch -> patch -> configure -> build -> package,
+    # all green; provenance cross-checked against an independently-fetched
+    # tarball with zero diff outside patch-touched files) and covered by
+    # its own series at patches/kernel-org-7.2/ — see the "7.2.2 bump" note
+    # there for the full verification record. Install + reboot audit is
+    # still pending (a system-changing action, left for the operator).
+    # `hyphaed` with NO flags is meant to be the one good command — bump
+    # --target here when a newer kernel.org stable lands and has been
+    # validated the same way, rather than expecting every invocation to
+    # pass it explicitly.
+    p.add_argument("--target", default="7.2.2", help="target kernel.org stable version, e.g. 7.2.2. Bump this default after validating a newer kernel.org stable release, or run `hyphaed list-versions` to see the last 5 releases with dates.")
     p.add_argument(
         "--source-mode", choices=["kernel-org"], default="kernel-org",
         help="kernel.org is the only source: clones the stable tag given by --target from the "
@@ -86,6 +91,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp_prune = sub.add_parser("prune", help="remove old hyphaed kernels keeping the newest N (default 2)")
     sp_prune.add_argument("--keep", type=int, default=2, help="how many newest kernels to keep (default 2)")
     sub.add_parser("verify", help="post-reboot health check (mitigations, BORE, cmdline, DKMS, …)")
+    sp_tune = sub.add_parser("tune", help="idempotent runtime/userspace tuning — re-run anytime (see hyphaed/tuning.py)")
+    sp_tune.add_argument("action", nargs="?", default="report", choices=["report", "apply"],
+                          help="report (default): show current state; apply: fix what's wrong (respects top-level --dry-run)")
     sub.add_parser("doctor", help="wide self-diagnostic: detect + verify + repo + driver/module health")
     sub.add_parser("update-cmdline", help="write/update GRUB cmdline drop-in only (no kernel build)")
     sub.add_parser("update-boot-config", help="write the dracut/udev drop-ins this project owns + rebuild the initramfs (no kernel build)")
@@ -99,8 +107,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp_scx = sub.add_parser("scx", help="install + switch sched_ext userspace schedulers")
     sp_scx.add_argument("action", choices=["install", "status", "run", "stop", "enable", "disable"],
                         help="install/status/run/stop — one-shot; enable/disable — persistent systemd unit")
-    sp_scx.add_argument("scheduler", nargs="?", default="lavd",
-                        help="lavd / bpfland / rusty / simple / nest (for `run` and `enable`)")
+    # Default bpfland, not lavd — scx issue #3340 is a memory leak in
+    # scx_lavd --performance mode, reproduced on Intel hybrid P/E systems
+    # (this box's i9-14900KF is exactly that class). bpfland doesn't
+    # reproduce it. lavd stays available, just not the silent default.
+    sp_scx.add_argument("scheduler", nargs="?", default="bpfland",
+                        help="bpfland / lavd / rusty / simple / nest (for `run` and `enable`); default bpfland — scx_lavd --performance has a known memory leak (scx#3340) reproduced on Intel hybrid P/E CPUs")
     sub.add_parser("snapshot", help="export current build state as state/snapshot-<date>.yaml")
     sub.add_parser("fetch-patches", help="download + verify vendored patches (wraps patches/fetch.py)")
     sub.add_parser("eval-patches", help="test-apply patch series against a source tree; classify CLEAN/CONFLICT/ALREADY-APPLIED (wraps patches/eval.py)")
@@ -244,6 +256,57 @@ def _cmd_clean(ctx: Ctx) -> int:
         if f.exists():
             f.unlink()
             log.ok(f"removed {f.name}")
+    return 0
+
+
+def _cmd_tune(ctx: Ctx, action: str) -> int:
+    from . import tuning
+    from rich.table import Table
+
+    results = tuning.run_report()
+    t = Table(header_style="bold magenta")
+    t.add_column("item", style="cyan")
+    t.add_column("status")
+    t.add_column("detail", style="grey70")
+    needs_fix = []
+    for item, ok, detail in results:
+        t.add_row(item.name, "[ok]✓[/ok]" if ok else "[err]✗[/err]", detail)
+        if not ok:
+            needs_fix.append(item)
+    log.console.print(t)
+
+    advisories = tuning.advisories()
+    if advisories:
+        log.info("advisory only — needs diagnostics/bench-*.sh evidence before it earns a fix, never auto-applied:")
+        for a in advisories:
+            log.console.print(f"  • {a.name}: {a.detail} — {a.why_not_applied}")
+
+    if action != "apply":
+        if needs_fix:
+            log.warn(f"{len(needs_fix)} item(s) need fixing — re-run as `python -m hyphaed tune apply`")
+            return 1
+        log.ok("all tuning items already correct")
+        return 0
+
+    if not needs_fix:
+        log.ok("nothing to apply — all tuning items already correct")
+        return 0
+
+    for item in needs_fix:
+        if item.apply is None:
+            continue
+        log.info(f"applying: {item.name}")
+        try:
+            item.apply()
+        except Exception as exc:  # noqa: BLE001 — one item's failure must not skip the rest
+            log.err(f"{item.name}: apply failed — {exc}")
+
+    log.info("re-checking…")
+    still_broken = [item.name for item, ok, _ in tuning.run_report() if not ok]
+    if still_broken:
+        log.err(f"still not fixed: {', '.join(still_broken)}")
+        return 1
+    log.ok("all tuning items now correct")
     return 0
 
 
@@ -671,17 +734,26 @@ def _cmd_scx(action: str, scheduler: str) -> int:
     from .util.run import run, run_sudo, sudo_keepalive
     if action == "install":
         sudo_keepalive()
-        # Ubuntu 25.04+ ships the umbrella package as `scx-scheds` (verified
-        # 2026-08-07 against a real 26.04 box — the earlier `scx`/`scx-loader`
-        # names don't exist in the archive; `check=False` below previously
-        # swallowed that failure and printed a false "installed" message
-        # regardless of outcome).
+        # Package name has moved under us once already: a 2026-08-07 check
+        # against a real 26.04 box found `scx-scheds` and no `scx`. Re-checked
+        # 2026-08-28 on this box (Ubuntu 26.04 "resolute", ppa:arighi/sched-ext
+        # already configured) and it's the reverse — `apt-cache policy
+        # scx-scheds` returns nothing, `apt-cache policy scx` resolves to
+        # 1.1.2-1 from that PPA. Try both rather than re-hardcode a single
+        # name that has already drifted once; `check=False` below previously
+        # swallowed a failure and printed a false "installed" message
+        # regardless of outcome, so failure of BOTH names is what's checked.
         run_sudo(["apt", "update"], check=False)
-        r = run_sudo(["apt", "install", "-y", "scx-scheds"], check=False)
-        if not r.ok():
-            log.err("apt install scx-scheds failed — see output above")
+        pkg = None
+        for candidate in ("scx", "scx-scheds"):
+            r = run_sudo(["apt", "install", "-y", candidate], check=False)
+            if r.ok():
+                pkg = candidate
+                break
+        if pkg is None:
+            log.err("apt install failed for both 'scx' and 'scx-scheds' — see output above")
             return 2
-        log.ok("scx-scheds installed — `hyphaed scx run lavd` to switch scheduler")
+        log.ok(f"{pkg} installed — `hyphaed scx run bpfland` to switch scheduler")
         return 0
     if action == "status":
         if not Path("/sys/kernel/sched_ext").exists():
@@ -1197,6 +1269,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "verify":
         from . import verify as verify_mod
         return verify_mod.render(verify_mod.run_all(flavour="hyphaed"))
+
+    if args.cmd == "tune":
+        return _cmd_tune(ctx, args.action)
 
     if args.cmd == "compare":
         return _cmd_compare(args.a, args.b, args.only_changed)

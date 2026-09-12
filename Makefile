@@ -22,8 +22,9 @@ help:
 	@echo "  make list-presets     list available presets"
 	@echo "  make fetch-patches    download + verify vendored patches"
 	@echo "  make build-package    RECOMMENDED single command: fetch -> patch -> configure ->"
-	@echo "                        build -> package (kernel.org 7.1.3 + gaming-ai-vm by"
-	@echo "                        default). Produces .debs only — stops before touching your"
+	@echo "                        build -> package (kernel.org --target default + gaming-ai-vm"
+	@echo "                        by default, see hyphaed/cli.py). Produces .debs only —"
+	@echo "                        stops before touching your"
 	@echo "                        running system. Review, then \`make install\` when ready."
 	@echo "  make build            same defaults, but runs ALL the way through install +"
 	@echo "                        postinstall (dpkg -i + GRUB drop-in) in one shot"
@@ -39,8 +40,8 @@ help:
 	@echo "  make prune            remove old hyphaed kernels (KEEP=2 by default)"
 	@echo "  make uninstall        dpkg --purge all hyphaed kernels"
 	@echo "  make rebase TARGET=7.0.0-16-generic"
-	@echo "  make scx-install / scx-status / scx-run SCHED=lavd"
-	@echo "  make scx-enable SCHED=lavd    install persistent systemd unit"
+	@echo "  make scx-install / scx-status / scx-run SCHED=bpfland (default)"
+	@echo "  make scx-enable SCHED=bpfland install persistent systemd unit"
 	@echo "  make scx-disable              remove scx systemd unit"
 	@echo "  make test             run pytest invariants"
 	@echo "  make clean            remove build/, out/, state/"
@@ -134,13 +135,13 @@ scx-status:
 	$(PY) -m hyphaed scx status
 
 scx-run:
-	$(PY) -m hyphaed scx run $(or $(SCHED),lavd)
+	$(PY) -m hyphaed scx run $(or $(SCHED),bpfland)
 
 scx-stop:
 	$(PY) -m hyphaed scx stop
 
 scx-enable:
-	$(PY) -m hyphaed scx enable $(or $(SCHED),lavd)
+	$(PY) -m hyphaed scx enable $(or $(SCHED),bpfland)
 
 scx-disable:
 	$(PY) -m hyphaed scx disable
