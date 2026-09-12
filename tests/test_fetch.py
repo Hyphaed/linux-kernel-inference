@@ -108,3 +108,43 @@ def test_fetch_entry_unknown_kind_raises():
     import pytest
     with pytest.raises(ValueError, match="unknown kind"):
         patches_fetch.fetch_entry("file:///anything", "bad-kind")
+
+
+# ── base_dir_for resolves each lock against its own series directory ───────
+
+def test_base_dir_for_default_lock_is_patches_dir():
+    assert patches_fetch.base_dir_for(patches_fetch.LOCK) == patches_fetch.PATCH_DIR
+
+
+def test_base_dir_for_per_series_lock_is_the_series_subdir():
+    lock = patches_fetch.PATCH_DIR / "VENDOR-kernel-org-7.2.lock"
+    assert patches_fetch.base_dir_for(lock) == patches_fetch.PATCH_DIR / "kernel-org-7.2"
+
+
+def test_base_dir_for_xanmod_lock():
+    lock = patches_fetch.PATCH_DIR / "VENDOR-xanmod-7.1.lock"
+    assert patches_fetch.base_dir_for(lock) == patches_fetch.PATCH_DIR / "xanmod-7.1"
+
+
+# ── parse_lock honors an explicit --lock path ───────────────────────────────
+
+def test_parse_lock_defaults_to_module_lock():
+    entries = patches_fetch.parse_lock()
+    assert entries  # VENDOR.lock has real entries
+    assert entries == patches_fetch.parse_lock(patches_fetch.LOCK)
+
+
+def test_parse_lock_reads_an_explicit_lock_file(tmp_path):
+    lock = tmp_path / "VENDOR-other.lock"
+    lock.write_text("mypatch.patch  file:///tmp/mypatch.patch  deadbeef  local-file\n")
+    entries = patches_fetch.parse_lock(lock)
+    assert entries == [("mypatch.patch", "file:///tmp/mypatch.patch", "deadbeef", "local-file")]
+
+
+def test_main_lock_flag_targets_a_different_file(tmp_path, capsys):
+    # A patch file that doesn't exist on disk, so fetch fails cleanly —
+    # this only needs to prove --lock is actually read, not that fetch succeeds.
+    lock = tmp_path / "VENDOR-empty.lock"
+    lock.write_text("# empty lock file, no entries\n")
+    rc = patches_fetch.main(["--lock", str(lock)])
+    assert rc == 0  # nothing to fetch, nothing fails

@@ -11,9 +11,14 @@
 # several entries are local-file, not git-commit.
 #
 # VERIFIED 2026-08-27, and this is the real gate, not `patches/eval.py`:
-# a sequential `git am --3way` of all 22 entries in series order against a
-# fresh v7.2 tree (build/linux-7.2, tag base-7.2.0) applied every one with
-# zero conflicts.
+# a sequential `git am --3way` of all entries (22 at the time, now 24 — see
+# the 7.2.2 re-verification below) in series order against a fresh v7.2 tree
+# (build/linux-7.2, tag base-7.2.0) applied every one with zero conflicts.
+#
+# RE-VERIFIED 2026-08-28 against v7.2.2 (build/linux-7.2.2, tag base-7.2.2):
+# all 24 entries apply cleanly via sequential git am --3way. No sha256
+# re-pins needed — no patch file was re-anchored for the 7.2.2 bump. Full
+# detail in patches/kernel-org-7.2/series's "7.2.2 bump" note.
 #
 # eval.py disagreed, and was wrong in the way it is documented to be wrong.
 # It reported 21 CLEAN / 1 CONFLICT, flagging 0023 with "repository lacks the
@@ -32,8 +37,8 @@
 # them, and for rejecting a dozen others, is in patches/kernel-org-7.2/series.
 
 # ─── entries ─────────────────────────────────────────────────────────────────
-../custom/0001-cachyos-bore-7.2.patch                          file://$KI_ROOT/patches/custom/0001-cachyos-bore-7.2.patch                          61b9543e400d6fb38a68ee2276538ae14834bec75d7b06d3e1ac9977174ff619  local-file
-0002-xanmod-zen-vmscan-swap.patch                              git+file://$KI_ROOT/linux@5b4df09b709a                                              436757f151b1b8b08277ebba1bebb68e4dfb6d81e2a0c74d6084064bf25cf51c  git-commit
+../custom/0001-cachyos-bore-7.2.patch                       file://$KI_ROOT/patches/custom/0001-cachyos-bore-7.2.patch                          61b9543e400d6fb38a68ee2276538ae14834bec75d7b06d3e1ac9977174ff619  local-file
+../custom/0002-xanmod-vmscan-swappiness-7.2.5.patch         file://$KI_ROOT/patches/custom/0002-xanmod-vmscan-swappiness-7.2.5.patch           c4e5f45817222df5bc93d6166503e25bdb8bb9cb51749e5c27271897780135ca  local-file
 0003-xanmod-zen-vfs-cache.patch                                git+file://$KI_ROOT/linux@7ac91c5588e7                                              af1a0b1c26a3007dfa6a30853cb958350a311ac4d5d4b94248f5feb2d83deff9  git-commit
 0004-xanmod-zen-max-map-count.patch                            git+file://$KI_ROOT/linux@ed2a9eca2135                                              096e4f345903c7e7b3b75a7c1d868b2a491469a47163f71ec091a98ca4f314b4  git-commit
 0005-xanmod-zen-500hz-timer.patch                              git+file://$KI_ROOT/linux@0988dbc5822a                                              c6c524cbdec8adc786f726a412975aa9af895fcfbd8e5aad26a25487e95c9167  git-commit
@@ -48,12 +53,12 @@
 0014-mm-thp-defrag-defer-madvise-default.patch                 file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch       526a9e594d94a24ffabf237219eb2f3c94c82654153c6c4edf7c82e035215a17  local-file
 0015-kbuild-ubsan-extmod-opt-in.patch                          file://$KI_ROOT/patches/kernel-org-7.2/0015-kbuild-ubsan-extmod-opt-in.patch        3ba3cd7d30dd44abf8807c96de5273c4a632b65d9591c9e87feb602d4b0a07fa  local-file
 0018-xanmod-pci-acs-override.patch                             git+file://$KI_ROOT/linux@84598b0cf5c4                                              f92f931ded3103ad94b9f2a4a5f2a6cc7f4ce6f901c3fd89f2081db6b407267a  git-commit
-../custom/0019-dma-buf-priority-hint.patch                     file://$KI_ROOT/patches/custom/0019-dma-buf-priority-hint.patch                     3bf3af3be9110b78a54a9862688aa4e67bfe18a1156646871797d9251397060a  local-file
-../custom/0020-dma-buf-compressed-descriptor.patch             file://$KI_ROOT/patches/custom/0020-dma-buf-compressed-descriptor.patch             e6ea5aab805cad36d1ac50d68ade25c72a513e19d6fa6bb2426a75d62d074935  local-file
+../custom/0019-dma-buf-priority-hint.patch                  file://$KI_ROOT/patches/custom/0019-dma-buf-priority-hint.patch                     74b4d3fe2ac0ee927e1690c99d72fe8039d425c9fb95771361c8d5e34d359d84  local-file
+../custom/0020-dma-buf-compressed-descriptor.patch          file://$KI_ROOT/patches/custom/0020-dma-buf-compressed-descriptor.patch             b0bf13a4d720858301a039d888d983dea4777a1c4e3df8219e0763f23a97e97a  local-file
 0025-xanmod-mm-workingset-protection.patch                     git+file://$KI_ROOT/linux@80af49bc67fa                                              717bdb76bbff976603d54112b6efbd9fc728ac5f4588b2255868c6f0961d1dfa  git-commit
 0026-xanmod-kbuild-extmod-sign-config.patch                    git+file://$KI_ROOT/linux@19e5ebe24766                                              3016c3f798ec0b0e587c695fc5ac253075492db315e2d014a0df9b6fa14e5758  git-commit
 0027-xanmod-kbuild-deb-dbg-optin.patch                         git+file://$KI_ROOT/linux@c9d752c21d51                                              3ca940b1080248bc91c7e806a77550e106afa696373440c85f05ebf207259610  git-commit
-../custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch  file://$KI_ROOT/patches/custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch  0a6400da01aaf0b068c6031fdffa9a3c569477a9361f58378f970ec3025ebc18  local-file
+../custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch  file://$KI_ROOT/patches/custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch  941a4a3e4c6dad8f3883c4022392b734a908127e1ec3df11a741b042c97e9484  local-file
 ../custom/0024-apparmor-restrict-unprivileged-userns.patch     file://$KI_ROOT/patches/custom/0024-apparmor-restrict-unprivileged-userns.patch     07b7f7be849ef8faf6dbbf87f576837c08961d74614dd33a98d89e32660761ec  local-file
 
 # ─── 0023 note ───────────────────────────────────────────────────────────────
@@ -74,4 +79,13 @@
 # both kfunc sets still use BTF_KFUNCS_START/END, and 7.2's
 # register_btf_kfunc_id_set() still rejects a set without BTF_SET8_KFUNCS
 # (kernel/bpf/btf.c:9190; it was :9004 on 7.1). Still correct, still required.
+#
+# Fixed 2026-08-31: bpf_page_cache_ext_init() assigned the signed return of
+# btf_find_by_name_kind() into a u32 `type_id`, so `type_id < 0` could never
+# be true (sparse + coccinelle both flagged it independently, see
+# docs/static-analysis-findings-2026-08-21.md's 2026-08-28 section). Changed
+# to `s32 type_id` in both this file and the 7.1.10 sibling, so the two ports
+# stay byte-comparable outside this one type. sha256 re-pinned below. Still
+# dormant on this box (no BPF struct_ops program loaded), so this did not fix
+# a live incident — it fixes the one confirmed defect in the vendored patch.
 ../custom/0028-apparmor-userns-sfs-advertise.patch          file://$KI_ROOT/patches/custom/0028-apparmor-userns-sfs-advertise.patch          d2a0a34d36edf5071bd29a224b1ecdec029c4285bb4f0d9964044b3065f3af05  local-file

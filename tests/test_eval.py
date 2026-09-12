@@ -183,3 +183,15 @@ def test_main_empty_series_exits_nonzero(tmp_path):
     series.write_text("# empty\n")
     rc = patches_eval.main(["--against", str(tmp_path), "--series", str(series)])
     assert rc == 1
+
+
+# ── --sauce series-dir derivation ───────────────────────────────────────────────
+
+def test_sauce_dir_for_default_is_kernel_org_7_1():
+    assert patches_eval.sauce_dir_for("kernel-org-7.1") == patches_eval.PATCH_DIR / "kernel-org-7.1" / "sauce"
+
+
+def test_sauce_dir_for_honors_a_different_series():
+    # This is the case the base plan flagged: eval.py must not hardcode
+    # kernel-org-7.1 when evaluating a different series (e.g. 7.2's).
+    assert patches_eval.sauce_dir_for("kernel-org-7.2") == patches_eval.PATCH_DIR / "kernel-org-7.2" / "sauce"

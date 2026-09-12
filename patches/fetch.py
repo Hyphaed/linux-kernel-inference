@@ -39,9 +39,30 @@ def expand_root(url: str) -> str:
     return url.replace(_ROOT_TOKEN, str(REPO_ROOT))
 
 
-def parse_lock() -> list[tuple[str, str, str, str]]:
+def base_dir_for(lock_path: Path) -> Path:
+    """Where a lock's entry names resolve from — the same base directory its
+    matching series file uses. VENDOR.lock (ubuntu mode) sits in patches/ and
+    its entries are bare names in patches/ directly. Each per-series lock
+    (VENDOR-kernel-org-7.2.lock, VENDOR-xanmod-7.1.lock, ...) has its entries
+    resolve relative to patches/<suffix>/ — the series directory alongside it
+    — exactly like patches/kernel-org-7.2/series's own entries do, so a name
+    like ../custom/0001-foo.patch means the same thing in both files.
+
+    Previously every lock resolved against patches/ regardless of which one
+    it was, which was only ever correct for VENDOR.lock: a per-series lock's
+    bare entries landed one directory up from where the series file expected
+    them, and its ../custom/ entries landed one directory up from patches/
+    entirely (at the repo root).
+    """
+    name = lock_path.stem  # strips ".lock"
+    if name.startswith("VENDOR-"):
+        return PATCH_DIR / name[len("VENDOR-"):]
+    return PATCH_DIR
+
+
+def parse_lock(lock_path: Path = LOCK) -> list[tuple[str, str, str, str]]:
     entries = []
-    for lineno, raw in enumerate(LOCK.read_text().splitlines(), 1):
+    for lineno, raw in enumerate(lock_path.read_text().splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -127,22 +148,28 @@ def _candidates(url: str) -> list[str]:
     return out
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--discover", action="store_true",
                     help="fetch and print sha256s (don't fail on PINNED placeholders)")
     ap.add_argument("--try-branches", action="store_true",
                     help="(deprecated, no effect — local-source mode has no branch fallback)")
-    args = ap.parse_args()
+    ap.add_argument("--lock", type=Path, default=LOCK,
+                    help=f"path to the lock file to fetch/verify (default: {LOCK.name}, "
+                         "the ubuntu-mode lock — pass e.g. "
+                         "VENDOR-kernel-org-7.2.lock to verify a per-series lock instead; "
+                         "entries resolve into patches/<suffix>/, see base_dir_for())")
+    args = ap.parse_args(argv)
 
     if args.try_branches:
         print("  note: --try-branches is deprecated and has no effect in local-source mode")
 
     failures = 0
     discovered: list[tuple[str, str, str]] = []
+    base_dir = base_dir_for(args.lock)
 
-    for name, url, expected_sha, kind in parse_lock():
-        dst = PATCH_DIR / name
+    for name, url, expected_sha, kind in parse_lock(args.lock):
+        dst = base_dir / name
         print(f"→ {name}")
         try:
             data = fetch_entry(url, kind)
@@ -167,7 +194,7 @@ def main() -> int:
         print(f"  saved → {dst.name}")
 
     if discovered:
-        print("\nlock these in VENDOR.lock (replace PINNED sha with the computed value):")
+        print(f"\nlock these in {args.lock.name} (replace PINNED sha with the computed value):")
         for name, sha, url in discovered:
             print(f"  {name}  {url}  {sha}")
 

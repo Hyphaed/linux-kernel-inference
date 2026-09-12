@@ -106,8 +106,12 @@ def test_0020_patch_file_exists():
 @pytest.mark.skipif(not VENDOR_LOCK.exists(), reason="VENDOR-kernel-org-7.1.lock not present")
 def test_0020_vendor_lock_sha256_matches_real_file():
     lock_text = VENDOR_LOCK.read_text()
+    # Match by substring, not startswith — the entry's name field carries a
+    # ../custom/ prefix (it's consumed straight from patches/custom/, not
+    # copied into patches/kernel-org-7.1/), same convention the rest of this
+    # test file already uses for 0019/0020 (see test_0020_ordered_after_0019).
     line = next(
-        (ln for ln in lock_text.splitlines() if ln.strip().startswith("0020-dma-buf-compressed-descriptor.patch")),
+        (ln for ln in lock_text.splitlines() if "0020-dma-buf-compressed-descriptor.patch" in ln),
         None,
     )
     assert line is not None, "0020 entry missing from VENDOR-kernel-org-7.1.lock"
