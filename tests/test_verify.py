@@ -89,6 +89,41 @@ def test_cpu_governor_schedutil_passes(monkeypatch, tmp_path):
     assert hasattr(res, "ok") and hasattr(res, "name")
 
 
+def test_cpu_governor_intel_pstate_active_epp_performance_passes(monkeypatch):
+    # Real 2026-08-31 case: intel_pstate=active, governor=powersave (the only
+    # HWP-driven governor), EPP=performance. That's correct, not a failure —
+    # schedutil isn't even selectable under intel_pstate=active.
+    def _fake_read(p):
+        if "scaling_governor" in p:
+            return "powersave"
+        if "intel_pstate/status" in p:
+            return "active"
+        if "energy_performance_preference" in p:
+            return "performance"
+        return ""
+    monkeypatch.setattr(v, "_read", _fake_read)
+    res = v.check_cpu_governor()
+    assert res.ok
+    assert "EPP=performance" in res.detail
+
+
+def test_cpu_governor_intel_pstate_active_epp_power_fails(monkeypatch):
+    # Same intel_pstate=active machine, but genuinely idle-biased (EPP=power)
+    # — this must still fail, so the EPP-based check can't rubber-stamp
+    # everything just because intel_pstate is active.
+    def _fake_read(p):
+        if "scaling_governor" in p:
+            return "powersave"
+        if "intel_pstate/status" in p:
+            return "active"
+        if "energy_performance_preference" in p:
+            return "power"
+        return ""
+    monkeypatch.setattr(v, "_read", _fake_read)
+    res = v.check_cpu_governor()
+    assert not res.ok
+
+
 def test_hugepages_ok_when_thp_madvise(monkeypatch):
     def _fake_read(p):
         if "transparent_hugepage/enabled" in p:
@@ -207,3 +242,106 @@ def test_nvidia_fs_skips_when_gds_absent(monkeypatch):
     monkeypatch.setattr(v, "Path", lambda p: type("P", (), {"exists": lambda s: False})())
     res = v.check_nvidia_fs_loaded()
     assert res.ok and "n/a" in res.detail
+
+
+def test_nvidia_fs_names_wrong_kernel_cause(monkeypatch):
+    """Confirmed 2026-09-12 on 7.2.5-hyphaed: nvidia-fs.ko failed to load with
+    a bare EINVAL, and the real cause (built against a different kernel's
+    nvidia symbols) was sitting in nvidia-fs's own DKMS make.log. This check
+    must surface that cause, not just "NOT loaded"."""
+    monkeypatch.setattr(v.shutil, "which", lambda n: "/usr/bin/gdscheck" if n == "gdscheck" else None)
+    monkeypatch.setattr(v, "_cmd", lambda args: "" if args[0] == "lsmod" else "7.2.5-hyphaed\n")
+    monkeypatch.setattr(v, "nvidia_fs_module_is_truncated", lambda kver: None)
+    monkeypatch.setattr(v, "nvidia_fs_built_against_wrong_kernel", lambda kver: "7.2.3-hyphaed")
+    res = v.check_nvidia_fs_loaded()
+    assert not res.ok
+    assert "7.2.3-hyphaed" in res.detail
+    assert "fix-nvidia-fs-symvers.sh" in res.detail
+
+
+def test_nvidia_fs_names_truncated_module_cause(monkeypatch):
+    monkeypatch.setattr(v.shutil, "which", lambda n: "/usr/bin/gdscheck" if n == "gdscheck" else None)
+    monkeypatch.setattr(v, "_cmd", lambda args: "" if args[0] == "lsmod" else "7.2.5-hyphaed\n")
+    monkeypatch.setattr(v, "nvidia_fs_module_is_truncated", lambda kver: Path("/lib/modules/7.2.5-hyphaed/updates/dkms/nvidia-fs.ko"))
+    monkeypatch.setattr(v, "nvidia_fs_built_against_wrong_kernel", lambda kver: None)
+    res = v.check_nvidia_fs_loaded()
+    assert not res.ok
+    assert "0 bytes" in res.detail
+
+
+def test_dkms_status_orphan_entry_is_not_a_failure(monkeypatch):
+    """hid-xpadneo/v0.11-pre-63-...: added is a stale source registration
+    with no kernel field at all — confirmed 2026-09-12 on 7.2.5-hyphaed, a
+    leftover from a version bump unrelated to the running kernel. It must
+    not fail the check."""
+    monkeypatch.setattr(v.shutil, "which", lambda n: "/usr/sbin/dkms")
+    monkeypatch.setattr(v, "_cmd", lambda args: (
+        "7.2.5-hyphaed\n" if args[0] == "uname" else
+        "greenboost/3.4, 7.2.5-hyphaed, x86_64: installed\n"
+        "hid-xpadneo/v0.11-pre-63-g3acca9f-dirty: added\n"
+        "hid-xpadneo/v0.11-pre-64-g5de4fde-dirty, 7.2.5-hyphaed, x86_64: installed\n"
+    ))
+    res = v.check_dkms_status("hyphaed")
+    assert res.ok
+    assert "orphaned" in res.detail
+
+
+def test_dkms_status_fails_on_real_missing_build(monkeypatch):
+    """A line that DOES name the running kernel and isn't installed is a
+    genuine failure, unlike the orphan case above."""
+    monkeypatch.setattr(v.shutil, "which", lambda n: "/usr/sbin/dkms")
+    monkeypatch.setattr(v, "_cmd", lambda args: (
+        "7.2.5-hyphaed\n" if args[0] == "uname" else
+        "nvidia/615.71.09, 7.2.5-hyphaed, x86_64: not installed\n"
+    ))
+    res = v.check_dkms_status("hyphaed")
+    assert not res.ok
+    assert "not installed" in res.detail
+
+
+def test_dkms_status_check_name_is_consistent(monkeypatch):
+    """All branches must return the same check name — it used to flip
+    between 'DKMS modules built' (skip paths) and 'DKMS modules all
+    installed' (real path), which reads as two different rows depending on
+    outcome."""
+    monkeypatch.setattr(v.shutil, "which", lambda n: None)
+    skipped = v.check_dkms_status("hyphaed")
+    monkeypatch.setattr(v.shutil, "which", lambda n: "/usr/sbin/dkms")
+    monkeypatch.setattr(v, "_cmd", lambda args: (
+        "7.2.5-hyphaed\n" if args[0] == "uname" else
+        "nvidia/615.71.09, 7.2.5-hyphaed, x86_64: installed\n"
+    ))
+    clean = v.check_dkms_status("hyphaed")
+    assert skipped.name == clean.name == "DKMS modules all installed"
+
+
+def test_greenboost_loaded_detail_empty_on_pass(monkeypatch):
+    monkeypatch.setattr(v, "_cmd", lambda args: "greenboost 69632 2\n")
+    res = v.check_greenboost_loaded()
+    assert res.ok and res.detail == ""
+
+
+def test_greenboost_loaded_detail_present_on_fail(monkeypatch):
+    monkeypatch.setattr(v, "_cmd", lambda args: "")
+    res = v.check_greenboost_loaded()
+    assert not res.ok and "modprobe greenboost" in res.detail
+
+
+def test_zswap_active_reports_debugfs_needed_when_stats_unreadable(monkeypatch):
+    """/sys/kernel/mm/zswap/{pool_total_size,written_back_pages} don't exist
+    on this kernel (root-only debugfs instead); confirmed 2026-09-12 the old
+    code rendered this as 'pool= written_back=', which reads as two zero
+    readings rather than two unreadable files."""
+    def fake_read(p):
+        if "zswap/parameters/enabled" in p:
+            return "Y"
+        if "zswap/parameters/compressor" in p:
+            return "lz4"
+        if "zswap/parameters/max_pool_percent" in p:
+            return "20"
+        return ""  # pool_total_size, written_back_pages: unreadable
+    monkeypatch.setattr(v, "_read", fake_read)
+    res = v.check_zswap_active()
+    assert res.ok
+    assert "root" in res.detail or "debug" in res.detail
+    assert "lz4" in res.detail

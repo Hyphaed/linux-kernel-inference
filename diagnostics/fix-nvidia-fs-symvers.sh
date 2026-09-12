@@ -32,12 +32,25 @@
 set -euo pipefail
 
 KVER="$(uname -r)"
-SRC=$(ls -d /usr/src/nvidia-fs-* 2>/dev/null | head -1)
+
+# Resolve the version dkms actually has registered, not the alphabetically-
+# first /usr/src/nvidia-fs-* dir. String sort gets this wrong (2.29.4 sorts
+# before 2.30.1 -- same trap as the v7.1.9/v7.1.10 tag regex in CLAUDE.md)
+# and this script's own Makefile.orig backup (see below) can leave a stale,
+# gutted source dir behind after an nvidia-fs package upgrade -- confirmed
+# 2026-09-12: /usr/src/nvidia-fs-2.29.4/ had nothing but Makefile.orig while
+# 2.30.1 was the real, currently-installed tree.
+VER=$(dkms status 2>/dev/null | sed -n 's#^nvidia-fs/\([^,]*\),.*#\1#p' | head -1)
+if [ -z "$VER" ]; then
+    SRC=$(ls -d /usr/src/nvidia-fs-* 2>/dev/null | sort -V | tail -1)
+    VER="${SRC##*nvidia-fs-}"
+fi
+SRC="/usr/src/nvidia-fs-$VER"
 
 [ "$(id -u)" -eq 0 ] || { echo "must run as root" >&2; exit 1; }
-[ -n "$SRC" ]        || { echo "no /usr/src/nvidia-fs-* found" >&2; exit 1; }
+[ -n "$VER" ] && [ -d "$SRC" ] || { echo "no /usr/src/nvidia-fs-* found" >&2; exit 1; }
+[ -f "$SRC/dkms.conf" ] || { echo "$SRC has no dkms.conf -- stale/incomplete source tree, check /usr/src/nvidia-fs-*" >&2; exit 1; }
 
-VER="${SRC##*nvidia-fs-}"
 echo "nvidia-fs $VER, target kernel $KVER"
 
 if lsmod | grep -q '^nvidia_fs'; then

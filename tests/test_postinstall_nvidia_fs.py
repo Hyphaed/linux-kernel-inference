@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hyphaed.phases.postinstall import (
-    _nvidia_fs_built_against_wrong_kernel,
-    _nvidia_fs_module_is_truncated,
+from hyphaed.nvidia_fs import (
+    nvidia_fs_built_against_wrong_kernel,
+    nvidia_fs_module_is_truncated,
 )
 
 
@@ -34,29 +34,29 @@ def _make_log(root: Path, fs_ver: str, kver: str, symvers_kver: str) -> None:
 def test_detects_symvers_from_a_different_kernel(tmp_path, monkeypatch):
     _make_log(tmp_path, "2.29.4", "7.1.10-hyphaed", "7.1.9-hyphaed")
     monkeypatch.setattr(
-        "hyphaed.phases.postinstall.Path",
+        "hyphaed.nvidia_fs.Path",
         lambda p: tmp_path if "dkms/nvidia-fs" in str(p) else Path(p),
     )
-    assert _nvidia_fs_built_against_wrong_kernel("7.1.10-hyphaed") == "7.1.9-hyphaed"
+    assert nvidia_fs_built_against_wrong_kernel("7.1.10-hyphaed") == "7.1.9-hyphaed"
 
 
 def test_consistent_build_reports_nothing(tmp_path, monkeypatch):
     _make_log(tmp_path, "2.29.4", "7.1.9-hyphaed", "7.1.9-hyphaed")
     monkeypatch.setattr(
-        "hyphaed.phases.postinstall.Path",
+        "hyphaed.nvidia_fs.Path",
         lambda p: tmp_path if "dkms/nvidia-fs" in str(p) else Path(p),
     )
-    assert _nvidia_fs_built_against_wrong_kernel("7.1.9-hyphaed") is None
+    assert nvidia_fs_built_against_wrong_kernel("7.1.9-hyphaed") is None
 
 
 def test_missing_log_is_not_an_error(tmp_path, monkeypatch):
     """No DKMS log at all must not be reported as a mismatch — nvidia-fs may
     simply not be installed for that kernel."""
     monkeypatch.setattr(
-        "hyphaed.phases.postinstall.Path",
+        "hyphaed.nvidia_fs.Path",
         lambda p: tmp_path if "dkms/nvidia-fs" in str(p) else Path(p),
     )
-    assert _nvidia_fs_built_against_wrong_kernel("7.1.10-hyphaed") is None
+    assert nvidia_fs_built_against_wrong_kernel("7.1.10-hyphaed") is None
 
 
 def test_the_version_sort_trap(tmp_path, monkeypatch):
@@ -67,11 +67,11 @@ def test_the_version_sort_trap(tmp_path, monkeypatch):
     _make_log(tmp_path, "2.29.4", "7.1.10-hyphaed", "7.1.9-hyphaed")
     _make_log(tmp_path, "2.29.4", "7.1.9-hyphaed", "7.1.9-hyphaed")
     monkeypatch.setattr(
-        "hyphaed.phases.postinstall.Path",
+        "hyphaed.nvidia_fs.Path",
         lambda p: tmp_path if "dkms/nvidia-fs" in str(p) else Path(p),
     )
-    assert _nvidia_fs_built_against_wrong_kernel("7.1.9-hyphaed") is None
-    assert _nvidia_fs_built_against_wrong_kernel("7.1.10-hyphaed") == "7.1.9-hyphaed"
+    assert nvidia_fs_built_against_wrong_kernel("7.1.9-hyphaed") is None
+    assert nvidia_fs_built_against_wrong_kernel("7.1.10-hyphaed") == "7.1.9-hyphaed"
 
 
 # ── a build that was killed leaves a 0-byte module and a happy dkms status ───
@@ -95,7 +95,7 @@ def _make_module(root: Path, kver: str, size: int) -> Path:
 def _patch_modules_root(monkeypatch, tmp_path, kver):
     real = Path
     monkeypatch.setattr(
-        "hyphaed.phases.postinstall.Path",
+        "hyphaed.nvidia_fs.Path",
         lambda p: tmp_path / kver if str(p) == f"/lib/modules/{kver}" else real(p),
     )
 
@@ -103,13 +103,13 @@ def _patch_modules_root(monkeypatch, tmp_path, kver):
 def test_zero_byte_module_is_detected(tmp_path, monkeypatch):
     ko = _make_module(tmp_path, "7.1.10-hyphaed", 0)
     _patch_modules_root(monkeypatch, tmp_path, "7.1.10-hyphaed")
-    assert _nvidia_fs_module_is_truncated("7.1.10-hyphaed") == ko
+    assert nvidia_fs_module_is_truncated("7.1.10-hyphaed") == ko
 
 
 def test_a_real_module_is_not_flagged(tmp_path, monkeypatch):
     _make_module(tmp_path, "7.1.10-hyphaed", 255004)
     _patch_modules_root(monkeypatch, tmp_path, "7.1.10-hyphaed")
-    assert _nvidia_fs_module_is_truncated("7.1.10-hyphaed") is None
+    assert nvidia_fs_module_is_truncated("7.1.10-hyphaed") is None
 
 
 def test_no_module_at_all_is_not_a_truncation(tmp_path, monkeypatch):
@@ -117,13 +117,13 @@ def test_no_module_at_all_is_not_a_truncation(tmp_path, monkeypatch):
     and claiming truncation would send the operator down the wrong path."""
     (tmp_path / "7.1.10-hyphaed").mkdir(parents=True)
     _patch_modules_root(monkeypatch, tmp_path, "7.1.10-hyphaed")
-    assert _nvidia_fs_module_is_truncated("7.1.10-hyphaed") is None
+    assert nvidia_fs_module_is_truncated("7.1.10-hyphaed") is None
 
 
 def test_missing_modules_dir_does_not_raise(tmp_path, monkeypatch):
     """A postinstall check must never be the thing that kills the run."""
     _patch_modules_root(monkeypatch, tmp_path, "7.1.99-nope")
-    assert _nvidia_fs_module_is_truncated("7.1.99-nope") is None
+    assert nvidia_fs_module_is_truncated("7.1.99-nope") is None
 
 
 def test_compressed_module_is_covered(tmp_path, monkeypatch):
@@ -134,4 +134,4 @@ def test_compressed_module_is_covered(tmp_path, monkeypatch):
     ko = d / "nvidia-fs.ko.zst"
     ko.write_bytes(b"")
     _patch_modules_root(monkeypatch, tmp_path, "7.1.10-hyphaed")
-    assert _nvidia_fs_module_is_truncated("7.1.10-hyphaed") == ko
+    assert nvidia_fs_module_is_truncated("7.1.10-hyphaed") == ko

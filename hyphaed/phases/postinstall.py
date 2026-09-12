@@ -1,9 +1,12 @@
 from __future__ import annotations
-import re
 import shutil
 import subprocess
 from pathlib import Path
 
+from ..nvidia_fs import (
+    nvidia_fs_built_against_wrong_kernel,
+    nvidia_fs_module_is_truncated,
+)
 from ..util import log
 from ..util.run import run_sudo, run
 from ..version import hyphaed_uname_r
@@ -106,58 +109,6 @@ def _check_nvidia_endbr(kver: str, nv_ko: Path) -> None:
         )
 
 
-def _nvidia_fs_module_is_truncated(kver: str) -> Path | None:
-    """Return the built nvidia-fs.ko if DKMS left it empty, else None.
-
-    Found on 7.1.10, 2026-08-26. A DKMS build killed part-way — the machine
-    was shut down at 22:35 during it — leaves a zero-byte nvidia-fs.ko, a
-    zero-byte Module.symvers and a zero-byte make.log behind, and
-    `dkms status` still says `installed`. modprobe then fails with a bare
-    EINVAL, which reads exactly like the symvers-mismatch bug above and is
-    not it: there are no symbols to disagree about.
-
-    Worth checking before anything else, because every other diagnosis in
-    this function assumes a module that at least exists.
-    """
-    candidates = sorted(Path(f"/lib/modules/{kver}").rglob("nvidia-fs.ko*"))
-    for ko in candidates:
-        try:
-            if ko.stat().st_size == 0:
-                return ko
-        except OSError:
-            continue
-    return None
-
-
-def _nvidia_fs_built_against_wrong_kernel(kver: str) -> str | None:
-    """Return the foreign kernel version nvidia-fs took its nvidia symbols
-    from, or None if the build looks consistent.
-
-    nvidia-fs's DKMS build logs the Module.symvers it resolved:
-
-        Using nvidia DKMS Module.symvers: \
-            /var/lib/dkms/nvidia/<ver>/<KVER>/x86_64/module/Module.symvers
-
-    When <KVER> is not the kernel being built for, the resulting module
-    carries the wrong nvidia_p2p_* CRCs and fails to insert with EINVAL.
-    Reading the log is exact; guessing from the errno is not.
-    """
-    logs = sorted(Path("/var/lib/dkms/nvidia-fs").glob(
-        f"*/{kver}/*/log/make.log"))
-    for log_path in logs:
-        try:
-            text = log_path.read_text(errors="replace")
-        except OSError:
-            continue
-        for line in text.splitlines():
-            if "Module.symvers" not in line or "/var/lib/dkms/nvidia/" not in line:
-                continue
-            m = re.search(r"/var/lib/dkms/nvidia/[^/]+/([^/]+)/", line)
-            if m and m.group(1) != kver:
-                return m.group(1)
-    return None
-
-
 def _check_nvidia_fs(kver: str) -> None:
     """Verify GPUDirect Storage's kernel module (nvidia-fs.ko) is actually
     loaded, not just that the userspace GDS tools are installed.
@@ -200,8 +151,8 @@ def _check_nvidia_fs(kver: str) -> None:
                     "  sudo gdscheck -p"
                 )
     elif gds_installed:
-        truncated = _nvidia_fs_module_is_truncated(kver)
-        wrong_kver = _nvidia_fs_built_against_wrong_kernel(kver)
+        truncated = nvidia_fs_module_is_truncated(kver)
+        wrong_kver = nvidia_fs_built_against_wrong_kernel(kver)
         if truncated:
             log.err(
                 f"nvidia-fs.ko is 0 bytes at {truncated} — the DKMS build "
@@ -361,11 +312,28 @@ def _check_dgx_parity_basics() -> None:
     if "nvidia_peermem" in (r.stdout or ""):
         log.ok("nvidia_peermem already loaded")
     elif run(["modinfo", "nvidia-peermem"], check=False).ok():
-        run_sudo(["modprobe", "nvidia-peermem"], check=False)
-        conf = Path("/etc/modules-load.d/nvidia-peermem.conf")
-        if not conf.exists():
-            run_sudo(["tee", str(conf)], input_str="nvidia-peermem\n", check=False, capture=True)
-        log.ok("nvidia_peermem loaded and set to load at boot (only matters for GPUDirect RDMA)")
+        # modinfo only proves the module exists on disk. nvidia-peermem's
+        # real work is compiled out behind #if defined(NV_MLNX_IB_PEER_MEM_
+        # SYMBOLS_PRESENT) -- on a box with no Mellanox OFED / ib_core stack
+        # that branch is a bare `return -EINVAL`, so modprobe fails every
+        # time regardless of how the module was built. Persisting a boot-time
+        # load for a module that structurally cannot succeed here just turns
+        # into a permanently-failed systemd-modules-load.service (and, via
+        # its Requires=, drags down anything that depends on it) -- so check
+        # the real result before claiming success or writing the loader
+        # config. Found 2026-08-31: every boot on this box failed exactly
+        # this way, with no IB hardware present to make it succeed.
+        if run_sudo(["modprobe", "nvidia-peermem"], check=False).ok():
+            conf = Path("/etc/modules-load.d/nvidia-peermem.conf")
+            if not conf.exists():
+                run_sudo(["tee", str(conf)], input_str="nvidia-peermem\n", check=False, capture=True)
+            log.ok("nvidia_peermem loaded and set to load at boot (only matters for GPUDirect RDMA)")
+        else:
+            log.info(
+                "nvidia_peermem present but won't insert (needs a Mellanox OFED / "
+                "ib_core peer-memory stack this box doesn't have) — not scheduling "
+                "it to load at boot; only matters for GPUDirect RDMA"
+            )
     else:
         log.warn("nvidia-peermem module not built for this kernel — DKMS may not have registered it")
 

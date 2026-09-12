@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .nvidia_fs import nvidia_fs_built_against_wrong_kernel, nvidia_fs_module_is_truncated
 from .util import log
 
 
@@ -141,21 +142,59 @@ def check_nvidia_loaded() -> Check:
 def check_greenboost_loaded() -> Check:
     lsmod = _cmd(["lsmod"])
     loaded = any(line.startswith("greenboost ") for line in lsmod.splitlines())
-    return Check("greenboost module loaded", loaded, "load with: sudo modprobe greenboost")
+    return Check("greenboost module loaded", loaded,
+                 "" if loaded else "load with: sudo modprobe greenboost")
 
 
 def check_dkms_status(flavour: str) -> Check:
+    """`dkms status -k <uname>` still emits kernel-less lines for a module
+    that has a source registered but no build for ANY kernel (dkms status
+    shorthand: `<pkg>/<ver>: added`, no comma-separated kernel field at all).
+    That's a stale/orphaned registration, not evidence the running kernel is
+    missing a module — confirmed 2026-09-12 on 7.2.5-hyphaed, where
+    hid-xpadneo/v0.11-pre-63-...: added was a leftover from a version bump
+    that had nothing to do with the kernel actually booted.
+
+    Only fail on a line that names the running kernel and isn't `installed`.
+    """
     if not shutil.which("dkms"):
-        return Check("DKMS modules built", True, "dkms not installed; skipped")
+        return Check("DKMS modules all installed", True, "dkms not installed; skipped")
     uname = _cmd(["uname", "-r"]).strip()
     out = _cmd(["dkms", "status", "-k", uname])
     if not out.strip():
-        return Check("DKMS modules built", True, f"no DKMS modules registered for {uname}")
-    bad = [ln for ln in out.splitlines() if "installed" not in ln.lower() and ln.strip()]
+        return Check("DKMS modules all installed", True, f"no DKMS modules registered for {uname}")
+
+    bad = []
+    orphans = []
+    for ln in out.splitlines():
+        if not ln.strip():
+            continue
+        # "<pkg>/<ver>, <kernel>, <arch>: installed" or
+        # "<pkg>/<ver>: added"  (no kernel field — orphaned source entry)
+        head = ln.split(":", 1)[0]
+        fields = [f.strip() for f in head.split(",")]
+        names_running_kernel = len(fields) >= 2 and fields[1] == uname
+        if not names_running_kernel:
+            orphans.append(ln)
+            continue
+        status = ln.split(":", 1)[1].strip().lower() if ":" in ln else ""
+        if status != "installed":
+            bad.append(ln)
+
+    detail_parts = []
+    if bad:
+        detail_parts.append("issues: " + "; ".join(bad))
+    if orphans:
+        detail_parts.append(f"{len(orphans)} orphaned entr{'y' if len(orphans) == 1 else 'ies'} "
+                             f"for other kernels/unbuilt sources (not a failure): "
+                             + "; ".join(orphans))
+    if not detail_parts:
+        detail_parts.append(f"all clean ({len(out.splitlines())} modules)")
+
     return Check(
         "DKMS modules all installed",
         not bad,
-        ("issues: " + "; ".join(bad)) if bad else f"all clean ({len(out.splitlines())} modules)",
+        " — ".join(detail_parts),
     )
 
 
@@ -168,17 +207,31 @@ def check_vmware_loaded() -> Check:
 
 
 def check_zswap_active() -> Check:
+    """`/sys/kernel/mm/zswap/{pool_total_size,written_back_pages}` don't exist
+    on this kernel — those live stats are under `/sys/kernel/debug/zswap/`,
+    root-only, and reading a missing path returns "". That used to render as
+    `pool= written_back=`, which looks like two zero readings rather than two
+    unreadable files (confirmed 2026-09-12: `_read()` silently returned "" for
+    both on a kernel where zswap was genuinely active). Report the
+    world-readable knobs instead and say plainly that the live stats need
+    root/debugfs.
+    """
     enabled = _read("/sys/module/zswap/parameters/enabled")
     if not enabled:
         return Check("zswap enabled", False, "/sys/module/zswap not available (zswap not compiled in?)")
     ok = enabled.upper() == "Y"
-    detail = ""
-    if ok:
-        pool = _read("/sys/kernel/mm/zswap/pool_total_size")
-        written = _read("/sys/kernel/mm/zswap/written_back_pages")
+    if not ok:
+        return Check("zswap active", False, f"enabled={enabled}")
+
+    compressor = _read("/sys/module/zswap/parameters/compressor")
+    max_pool_pct = _read("/sys/module/zswap/parameters/max_pool_percent")
+    pool = _read("/sys/kernel/mm/zswap/pool_total_size")
+    written = _read("/sys/kernel/mm/zswap/written_back_pages")
+    if pool or written:
         detail = f"pool={pool} written_back={written}"
     else:
-        detail = f"enabled={enabled}"
+        detail = (f"compressor={compressor or '?'} max_pool_percent={max_pool_pct or '?'} "
+                  f"(pool/written-back stats need root: /sys/kernel/debug/zswap/)")
     return Check("zswap active", ok, detail)
 
 
@@ -187,6 +240,26 @@ def check_cpu_governor() -> Check:
     if not gov_paths:
         return Check("CPU frequency governor", True, "cpufreq sysfs absent; likely using acpi-cpufreq HW control")
     gov = _read(str(gov_paths[0]))
+
+    # Under intel_pstate=active (HWP), the kernel only ever exposes the
+    # `powersave`/`performance` governor pair — `schedutil` isn't selectable
+    # at all — and `powersave` is the HWP-driven governor the EPP hint steers.
+    # `powersave` + EPP=performance is the *correct* setting here, not a
+    # failure: judge on EPP instead of the governor name, same way
+    # `powerprofilesctl`/`x86_energy_perf_policy` do. Found 2026-08-31: this
+    # check reported a false FAIL on a machine at governor=powersave,
+    # EPP=performance, energy_perf_bias=0 — the same "confident wrong
+    # verdict" failure mode as the hardening-checker 0-FAIL bug in CLAUDE.md.
+    pstate_status = _read("/sys/devices/system/cpu/intel_pstate/status")
+    if pstate_status == "active":
+        epp = _read("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference")
+        ok = epp in {"performance", "balance_performance"}
+        detail = f"intel_pstate=active, HWP-driven; governor={gov} EPP={epp}"
+        return Check(
+            "CPU governor suitable", ok,
+            detail + ("" if ok else "; prefer EPP=performance/balance_performance"),
+        )
+
     ok = gov in {"schedutil", "performance", "ondemand"}
     return Check("CPU governor suitable", ok, f"governor={gov}" + ("" if ok else "; prefer schedutil/performance"))
 
@@ -337,15 +410,51 @@ def check_nvidia_fs_loaded() -> Check:
     every NVMe<->GPU byte crosses PCIe twice. postinstall has caught this
     since 7.1.8, but only when the install phase actually runs; a manual
     `dpkg -i` skips it entirely.
+
+    When the module isn't loaded, name the cause instead of just the symptom
+    — `postinstall._check_nvidia_fs()` already knows how to read it from
+    nvidia-fs's own DKMS build log, and this used to make the operator
+    re-derive the same cause from a bare EINVAL (confirmed 2026-09-12 on
+    7.2.5-hyphaed: the cause was one line in make.log the whole time).
     """
     gds = shutil.which("gdscheck") is not None or \
         Path("/usr/local/cuda/lib64/libcufile.so").exists()
     if not gds:
         return Check("nvidia_fs loaded", True, "GDS not installed — n/a")
     loaded = "nvidia_fs" in _cmd(["lsmod"])
-    return Check("nvidia_fs loaded", loaded,
-                 "GDS peer-to-peer active" if loaded
-                 else "NOT loaded — GDS is in POSIX compat mode")
+    if loaded:
+        return Check("nvidia_fs loaded", True, "GDS peer-to-peer active")
+
+    kver = _cmd(["uname", "-r"]).strip()
+    truncated = nvidia_fs_module_is_truncated(kver) if kver else None
+    wrong_kver = nvidia_fs_built_against_wrong_kernel(kver) if kver else None
+    if truncated:
+        detail = (
+            f"NOT loaded — {truncated} is 0 bytes (a killed/interrupted DKMS "
+            f"build). Fix: sudo dkms install nvidia-fs -k {kver}"
+        )
+    elif wrong_kver:
+        detail = (
+            f"NOT loaded — built for {kver} against {wrong_kver}'s nvidia "
+            f"symbols, so the CRCs disagree. Fix: sudo bash "
+            f"diagnostics/fix-nvidia-fs-symvers.sh"
+        )
+    else:
+        detail = "NOT loaded — GDS is in POSIX compat mode"
+    return Check("nvidia_fs loaded", False, detail)
+
+
+def check_no_failed_units() -> Check:
+    """A failed systemd unit is exactly the class of boot-log issue that a
+    log-reading audit is supposed to catch, but nothing in this file did
+    until 2026-08-31: systemd-modules-load.service failed on every single
+    boot (nvidia_peermem, see postinstall.py) and `hyphaed verify` never
+    once surfaced it. `systemctl --failed` needs no privilege and is cheap.
+    """
+    out = _cmd(["systemctl", "--failed", "--no-legend", "--plain"])
+    units = [line.split()[0] for line in out.splitlines() if line.strip()]
+    return Check("no failed systemd units", not units,
+                 "clean" if not units else ", ".join(units))
 
 
 def run_all(flavour: str, cmdline_expected: list[str] | None = None) -> list[Check]:
@@ -371,6 +480,7 @@ def run_all(flavour: str, cmdline_expected: list[str] | None = None) -> list[Che
         check_dkms_status(flavour),
         check_vmware_loaded(),
         check_nvidia_fs_loaded(),
+        check_no_failed_units(),
         # patch series
         check_vfs_cache_pressure(),
         check_max_map_count_masked(),
