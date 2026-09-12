@@ -1251,7 +1251,7 @@ index 000000000..83e51516a
 +
 +static int bpf_page_cache_ext_init(struct btf *btf)
 +{
-+	u32 type_id;
++	s32 type_id;
 +
 +	type_id = btf_find_by_name_kind(btf, "page_cache_ext_eviction_ctx",
 +					BTF_KIND_STRUCT);

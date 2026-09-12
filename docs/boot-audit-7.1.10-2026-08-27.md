@@ -198,18 +198,21 @@ which is why it's a script and not something already applied.
    name, so VPN split-horizon DNS and internal names served by
    docker0/vmnet1/vmnet8/br-* will not resolve via those interfaces' own
    resolvers.
-3. `cpufrequtils` and `loadcpufreq` are enabled and ask for the `ondemand`
-   governor, which does not exist under `intel_pstate` in active mode. Three
-   deprecation warnings per boot for a service that cannot do anything. Same
-   lesson as the removed Build-options menu: a control that cannot change the
-   outcome is not a control.
-4. `sssd` enabled and unconfigured — six socket units fail their dependency
-   every boot.
-5. `/etc/bluetooth` is 0755; `bluetooth.service` declares
-   `ConfigurationDirectoryMode=555`.
-6. `/usr/src/nvidia-fs-2.29.4/Makefile.orig` is a 0-byte backup written the
-   minute the DKMS build was killed. The real fix is in place but will be
-   reverted by the next package upgrade.
+3. ✅ **Applied, verified 2026-08-28.** `cpufrequtils` and `loadcpufreq` are
+   now `disabled` (`systemctl is-enabled` on both); `journalctl -b | grep -ic
+   ondemand` reads 0. No more deprecation warnings for a control that
+   couldn't do anything.
+4. ✅ **Applied, verified 2026-08-28.** `sssd` is `disabled`;
+   `systemctl list-units 'sssd*' --all` returns zero units, so nothing fails
+   its dependency at boot anymore.
+5. ✅ **Applied, verified 2026-08-28.** `stat -c '%a' /etc/bluetooth` reads
+   `555`, matching `bluetooth.service`'s `ConfigurationDirectoryMode=555`.
+6. ✅ **Applied, verified 2026-08-28.** `/usr/src/nvidia-fs-2.29.4/Makefile.orig`
+   is 5099 bytes, not 0 — the fix held across the intervening 7.2.0/7.2.1
+   package upgrades this file warned it wouldn't survive. Worth a spot-check
+   again after the next `nvidia-fs-dkms` upgrade, since the underlying risk
+   (an upgrade overwriting the fixed file) hasn't changed, only the outcome
+   so far.
 
 ## Noise, confirmed as noise
 

@@ -86,9 +86,18 @@ Advertisement only — no enforcement-path change, so no behavior change
 beyond letting `apparmor.service` stop overriding the sysctl on its own.
 Verified: compiles clean (`security/apparmor/apparmorfs.o`), applies clean
 via `git am --3way` on top of the pinned 0024 commit. Referenced from
-`patches/kernel-org-7.2/series` right after 0024. Once this lands in a built
-kernel, the systemd drop-in above becomes redundant belt-and-suspenders
-rather than load-bearing.
+`patches/kernel-org-7.2/series` right after 0024.
+
+**Landed and confirmed, 2026-08-28.** 0028 is in the built 7.2.1-hyphaed
+kernel: `features/policy/unconfined_restrictions/userns` reads `yes`, and
+`kernel.apparmor_restrict_unprivileged_userns` reads `1` after `apparmor.service`
+loaded — it did not clobber the sysctl this boot. The systemd drop-in this
+section describes is no longer even present at
+`/etc/systemd/system/apparmor.service.d/90-hyphaed-userns.conf` (checked:
+does not exist on this box), so the predicted redundant-belt-and-suspenders
+state arrived as a clean "never needed it here" rather than "installed but
+unused". Still owes the full four-check re-verification below, not just the
+sysctl read — that hasn't been re-run yet on this boot.
 
 ### Re-verify after either fix
 
@@ -107,8 +116,8 @@ so the four checks above (not just the sysctl read) are all required, per
 
 - **Bluetooth + Wi-Fi both `rfkill` soft-blocked** (`hci0`, `phy0`).
   Consistent with `bluetoothd: Failed to set mode (0x03)` in the journal.
-  Not touched — could be an intentional airplane-mode key state, not a
-  kernel regression. Confirm intent before `rfkill unblock all`.
+  **Confirmed intentional, 2026-08-28 — leave as is.** Two harmless log lines
+  per boot on a wired desktop; not a kernel regression, not to be unblocked.
 - **chronyd NTS/TLS handshake fails** against all four `*.ntp.ubuntu.com:4460`
   ("certificate chain uses expired certificate"). Plain NTP fallback works —
   `chronyc tracking` shows stratum 3, synced, sub-millisecond offset. Time is

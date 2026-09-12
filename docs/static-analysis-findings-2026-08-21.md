@@ -152,18 +152,114 @@ zero, because the second bug (relative paths resolving against `cwd=tree`, so
 `build/linux-7.1.9/build/linux-7.1.9/...`) was still there. A single clean
 result proves nothing on its own.
 
-## Next
+## Re-run, 2026-08-28, against 7.2.2 — one new finding, not cosmetic
 
-Nothing outstanding on the analysers. All three run, all three are
-positive-controlled, and our own patches are clean under each.
-
-Worth doing when the series next changes: re-run both commands below and
-diff against this document. A new finding in `drivers/dma-buf/` is ours to
-answer for; a new one in baseline code is not.
+This doc had sat pinned at 7.1.9 since 2026-08-21, through the 7.1.10, 7.2,
+7.2.0, 7.2.1 and 7.2.2 bumps — the standing instruction below to re-run on
+every series change hadn't actually been followed. Scoped run against
+`build/linux-7.2.2` / `patches/kernel-org-7.2/series` (`--all-lines` not yet
+re-run — see the open item at the end of this section):
 
 ```bash
-python -m patches.staticcheck --against build/linux-7.1.9 \
-                              --series patches/kernel-org-7.1/series
-python -m patches.staticcheck --against build/linux-7.1.9 \
-                              --series patches/kernel-org-7.1/series --all-lines
+python -m patches.staticcheck --against build/linux-7.2.2 \
+                              --series patches/kernel-org-7.2/series --json
+```
+
+sparse: 55 findings. coccinelle: 1. smatch: 0. Split by ownership:
+
+| File | Findings | Ours? |
+|---|---|---|
+| `kernel/fork.c` | 3 | No — CachyOS BORE (0001), Track B |
+| `mm/util.c` | 3 | No — Track B |
+| `kernel/sched/bore.c` | 8 | No — Track B, same file as the two findings already recorded above |
+| `mm/memcontrol.c` | 11 | No — Track B (0025 workingset protection) |
+| `mm/page_cache_ext.c` | 3 | **Yes — 0023** |
+| `mm/page_cache_ext_ds.c` | 27 | **Yes — 0023** |
+
+The 27 in `page_cache_ext_ds.c` and 2 of the 3 in `page_cache_ext.c` are the
+same class already on record for `bore.c`: missing `static` / missing
+prototype on internal helpers (`cache_ext_list_alloc`,
+`__cache_ext_list_add_impl`, `sample_folios`, and 12 more) — namespace
+pollution, no behavioral effect, left as-is for the same reason: it's
+Zussman et al.'s original code, forward-ported, not something to silently
+rewrite mid-port.
+
+**The third `page_cache_ext.c` finding is a real bug, not decoration**, and
+both sparse and coccinelle independently flagged it — two different tools
+agreeing on the same line is a stronger signal than either alone:
+
+```c
+// mm/page_cache_ext.c:15-24, bpf_page_cache_ext_init()
+u32 type_id;
+
+type_id = btf_find_by_name_kind(btf, "page_cache_ext_eviction_ctx",
+                                BTF_KIND_STRUCT);
+if (type_id < 0) {
+	pr_err("page_cache_ext: failed to find struct page_cache_ext_eviction_ctx\n");
+	return -EINVAL;
+}
+```
+
+`btf_find_by_name_kind()` is declared `s32` in
+`include/linux/btf.h:236` and returns a negative error code (e.g. `-ENOENT`)
+when the type isn't found. `type_id` is declared `u32`. The assignment wraps
+a negative `s32` into a huge positive `u32`, so `type_id < 0` can never be
+true — sparse: "unsigned value that used to be signed checked against
+zero?"; coccinelle, independently: "Unsigned expression compared with zero:
+type_id < 0". The error path is dead code. If the BTF type genuinely isn't
+found, execution falls through to `btf_type_by_id(btf, type_id)` with a
+garbage out-of-range ID instead of returning `-EINVAL`.
+
+**Fixed 2026-08-31.** `type_id` is now declared `s32` in both
+`patches/custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch` and the
+7.1.10 sibling `patches/custom/0023-mm-bpf-cache-ext-page-cache-eviction.patch`
+(kept byte-comparable outside this one type, per the series file's own
+convention), so the `type_id < 0` check is meaningful again. sha256s
+re-pinned in both `patches/VENDOR-kernel-org-7.2.lock` and
+`patches/VENDOR-kernel-org-7.1.lock`. This is a local, mechanical typing fix
+to our vendored copy of Zussman et al.'s upstream code — not an upstream
+submission (nothing here triggers this repo's MUST-RULE disclosure/evidence
+process, since nothing is being sent anywhere).
+
+This was **dormant, not live**, when found and remains so after the fix —
+`bpf_page_cache_ext_init()` is a struct_ops `.init` callback, only called
+when a BPF program registers against `bpf_page_cache_ext_ops`, and 0023 is
+inert on this box (no BPF policy loaded; separately, its call sites may not
+even fire under MGLRU — see the series file and `docs/tasks_patches.md`
+T18). So it never produced a wrong result here. It still matters to the
+still-open work of proving 0023's hooks fire (T18): if that verification
+pass loads a BPF policy, the fixed error path now actually returns `-EINVAL`
+on a lookup miss instead of falling through to `btf_type_by_id()` with a
+garbage id — a real failure will now read as a real failure. **No kernel
+rebuild was done as part of this fix** — the currently-running 7.2.2-hyphaed
+kernel was built from the unfixed patch, but since 0023 is inert there's no
+live regression to correct by rebooting; the fix takes effect on the next
+build.
+
+**`--all-lines` re-run, same day, once the build finished:** sparse 190,
+smatch 6, coccinelle 12 — the larger counts are expected (whole-file scan,
+not just diff hunks, so baseline/Track B noise is included). Checked every
+finding's file against the owned-files list: the only one in code we ship
+is the same `mm/page_cache_ext.c:21` `type_id` bug already documented above
+— no new owned-file finding. smatch's `kernel/exit.c` static-assertion
+errors and `mm/util.c` duplicate-definition warning, and coccinelle's
+`fs/dcache.c` / `kernel/fork.c` / `kernel/bpf/verifier.c` items, are all in
+baseline or Track B (BORE/XanMod) code, not ours to answer for.
+
+## Next
+
+All three analysers run positive-controlled. One real finding stands: the
+`bore.c` sysctl signature below (Track B, unfixed by design). The
+`page_cache_ext.c` BTF sign bug above (ours) was fixed 2026-08-31.
+
+Worth doing when the series next changes: re-run both commands below and
+diff against this document. A new finding in `drivers/dma-buf/`,
+`mm/page_cache_ext*.c`, or `security/apparmor/` is ours to answer for; a new
+one in baseline or Track B code is not.
+
+```bash
+python -m patches.staticcheck --against build/linux-7.2.2 \
+                              --series patches/kernel-org-7.2/series
+python -m patches.staticcheck --against build/linux-7.2.2 \
+                              --series patches/kernel-org-7.2/series --all-lines
 ```
