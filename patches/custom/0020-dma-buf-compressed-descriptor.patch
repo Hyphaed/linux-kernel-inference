@@ -231,16 +231,17 @@ index b3d3f2858..965aa9aa0 100644
  	/**
  	 * @owner:
  	 *
-@@ -591,6 +629,10 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info);
- 
+@@ -591,7 +629,11 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info);
+
  void dma_buf_set_priority(struct dma_buf *dmabuf, unsigned int priority);
  unsigned int dma_buf_get_priority(struct dma_buf *dmabuf);
 +void dma_buf_set_compression(struct dma_buf *dmabuf, u32 codec,
 +			     u32 block_size, u64 uncompressed_size);
 +void dma_buf_get_compression(struct dma_buf *dmabuf,
 +			     struct dma_buf_compression_hint *out);
- 
+
  int dma_buf_fd(struct dma_buf *dmabuf, int flags);
+ void dma_buf_fd_install(struct dma_buf *dmabuf, int fd);
  struct dma_buf *dma_buf_get(int fd);
 diff --git a/include/uapi/linux/dma-buf.h b/include/uapi/linux/dma-buf.h
 index 4a1d26e0b..a1d7e7188 100644

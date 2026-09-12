@@ -9,7 +9,7 @@ Signed-off-by: Alexandre Frade <kernel@xanmod.org>
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/mm/vmscan.c b/mm/vmscan.c
-index 56708d1d2dfd..284bac839675 100644
+index ee3efc621..01027de6b 100644
 --- a/mm/vmscan.c
 +++ b/mm/vmscan.c
 @@ -196,7 +196,7 @@ struct scan_control {
@@ -18,6 +18,6 @@ index 56708d1d2dfd..284bac839675 100644
   */
 -int vm_swappiness = 60;
 +int vm_swappiness = 10;
- 
- #ifdef CONFIG_MEMCG
- 
+
+ static int sc_swappiness(struct scan_control *sc, struct mem_cgroup *memcg)
+ {

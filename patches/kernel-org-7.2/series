@@ -26,6 +26,67 @@
 # rebuild hits the identical `ar: rust/bindings.o` failure, retry before
 # re-diagnosing the patches.
 #
+# 7.2.2 bump (2026-08-28): v7.2.2 released 2026-08-28 (commit 52c36105f76e),
+# same day as this build. Security fix, not a routine bump: `inet: frags:
+# strip GSO state from fragments before reassembly` (upstream
+# d5dc1e69fd7258ea605c9952e5d5947539159ae3) closes an unprivileged local DoS
+# in ip_defrag() -> skb_segment() (BUG_ON in net/core/skbuff.c, panics with
+# BH disabled). Two commits total in the release, the other is the version
+# bump itself.
+#
+# Provenance: local mirror had no v7.2.2 tag; _ensure_stable_tag_in_mirror()
+# fetched it from the `stable` remote automatically. Cross-checked the
+# resulting build/linux-7.2.2 tree against an independently-downloaded
+# linux-7.2.2.tar.xz (kernel.org has not published a sha256 for 7.2.2 yet —
+# released same day): `diff -rq` shows zero differences outside build
+# artifacts and the exact 40 source files the 24 patches touch. Verified:
+# all 24 patches apply cleanly via sequential git am --3way (base-7.2.2
+# baseline, HEAD after patch phase = aa87096ff, the 0028 commit). No BORE
+# re-port needed — CachyOS's kernel-patches repo has no 7.2.2-specific
+# commit; the 7.2 major.minor patch (96debce3) is current, checked directly
+# against the fetched repo.
+#
+# kernel.ubuntu.com DOES have a v7.2.2 amd64 build this time (unlike 7.2.1,
+# which fell back to the 7.2.0 config) — configure recovered a genuine
+# config-7.2.2-070202-generic baseline. Diffed against the 7.2.1 build's
+# config-7.2.0-070200-generic fallback: identical except the version-string
+# comment, so the baseline move cost nothing in practice.
+#
+# Compile-check patch 0023: all 9 objects clean (mm/*, kernel/bpf,
+# kernel/trace) — no repeat of the BTF_SET8/strncpy silent-breakage class
+# this patch has taught twice before. Build verified end-to-end: 4 .deb
+# artifacts (linux-image 114M, linux-headers 11M, linux-tools 5M,
+# linux-libc-dev 1.5M), build phase 1463.5s. Test suite: 475 passed, 6
+# skipped, 1 pre-existing environmental failure unrelated to this bump
+# (GreenBoost-side vm.max_map_count override not currently active on this
+# box — tracked in the GreenBoost repo, not here).
+#
+# First bindeb-pkg attempt hit the same failure CLASS as the 7.2.1
+# rust/bindings.o race documented above, different object:
+# `ar: tools/bpf/resolve_btfids/libbpf/staticobjs/libbpf-in.o: No such file
+# or directory` under -j32. Same fix: no `make clean`, just re-invoke — the
+# retry completed clean. `bpftool` (part of linux-hyphaed-tools, not the
+# kernel image) hit one more instance of the identical race class and was
+# skipped by the tools-build's own failure handling; confirmed by building
+# it standalone (`make -j4` in tools/bpf/bpftool) with no source change,
+# where it links cleanly — not a patch defect, just parallel-build flakiness
+# under high -j. linux-hyphaed-tools_7.2.2-*.deb ships perf, cpupower,
+# turbostat, x86_energy_perf_policy; bpftool absent this build. A full
+# rebuild would likely pick it up; not worth a 24-minute rebuild for a tool
+# already present from the 7.2.1 package.
+#
+# Static analysis re-run against 7.2.2 (was pinned at 7.1.9 since
+# 2026-08-21, several bumps stale): one new real finding, in our own 0023 —
+# see docs/static-analysis-findings-2026-08-21.md's 2026-08-28 section.
+# `bpf_page_cache_ext_init()` in mm/page_cache_ext.c assigns
+# btf_find_by_name_kind()'s signed s32 return into an unsigned u32
+# `type_id`, so `if (type_id < 0)` is dead code — a BTF lookup failure
+# falls through to btf_type_by_id() with a garbage ID instead of returning
+# -EINVAL. Currently dormant (struct_ops .init callback, never called
+# without a loaded BPF policy), not fixed here, but the first place to
+# check if the still-open T18 verification (loading a real cache_ext BPF
+# policy) behaves strangely instead of erroring cleanly.
+#
 # Read patches/kernel-org-7.1/series as well — its long runtime-verification
 # notes (which patches are masked, inert, or unprovable on this hardware)
 # still apply and are NOT duplicated here. Only what CHANGED at 7.2 is below.
@@ -149,9 +210,98 @@
 #                 rt-i915 (this is a 14900**KF** — there is no iGPU),
 #                 dkms-clang (we build with gcc). Nothing taken.
 #   linux-tkg has no 7.2 branch; linux-cachyos is still at 7.0.6.
+#
+# 7.2.5 bump (2026-09-12): v7.2.5 released 2026-09-11 (commit
+# 4c440ba64342e015be9eb06f1ea824eb6e81e562), fetched via
+# `hyphaed --target 7.2.5 --phase source` — exact Canonical mainline
+# baseline config recovered (config-7.2.5-070205-generic), no series
+# fallback needed.
+#
+# XanMod 7.2 branch head moved to 48995b0a27571c4879b058b1a8a4c797c332b750
+# (tag Linux 7.2.4-xanmod1 — a full rebase-merge of v7.2.4). All 13
+# existing git-commit pins (0003-0011, 0018, 0025-0027) were checked for
+# reachability from the new head via `git merge-base --is-ancestor`: all 13
+# still resolve — no re-pin needed for those.
+#
+# 0002 is the one entry that genuinely needed work, and the fix that
+# landed is NOT what a same-day research note first proposed. That note
+# (research-polished revision of the git-fetch-new-kernel plan,
+# 2026-09-12) checked only reachability — confirmed the original pinned
+# commit (b349fc3a5462584a526078f3d73c4f1a3a256b85) still exists under a
+# new hash (5b4df09b709a88cf19bd4c9d6ff01978088bfb2e) on the rebased
+# branch — and concluded that meant a straight `git-commit` pin (format-
+# patch dump of that commit) would apply cleanly. It does not: XanMod's
+# tree carries other reordering around mm/vmscan.c that a real kernel-org
+# v7.2.5 tree doesn't have (their copy has `sc_swappiness()` wrapped in
+# `#ifdef CONFIG_MEMCG`; kernel-org's — confirmed back to v7.2.4 too, so
+# this isn't even a 7.2.5-specific drift — does not). A straight dump of
+# that commit fails `git apply --check` on this tree with "patch failed:
+# mm/vmscan.c:196" every time, regardless of which hash it's dumped from.
+# Fixed by regenerating the one-line change directly against our real
+# v7.2.5 tree (`git diff` after a scripted one-line edit, then revert) and
+# keeping the original author/date/subject/Signed-off-by for provenance:
+# ../custom/0002-xanmod-vmscan-swappiness-7.2.5.patch, kind stays
+# local-file (matching what was already true before this bump — the
+# earlier -7.2.4 local-file swap was solving the exact same tree-lineage
+# mismatch, not really a "drifted pin" in the git-commit sense). Verified
+# `git apply --check` clean against build/linux-7.2.5 standalone (0002 is
+# early enough in the series, right after 0001 BORE which doesn't touch
+# vmscan.c, that a standalone check is valid here — unlike 0025 below).
+#
+# Lesson for the next bump: `merge-base --is-ancestor` proves a commit
+# still exists on the vendor's branch. It does NOT prove a straight
+# `git format-patch` dump of that commit will apply to a different-lineage
+# tree (kernel-org vs. a vendor's own rebased history, which can carry
+# unrelated context-shifting changes nearby). Only an actual `git apply
+# --check` (or the real sequential `git am --3way`) against the real
+# target tree settles that — same lesson patches/eval.py's false-CONFLICT
+# history already teaches, from a different angle.
+#
+# 0025 (mm workingset protection) failed a *standalone* `git apply --check`
+# against a pristine v7.2.5 tree with "patch failed: include/linux/mm.h:208"
+# — but that's the exact false-conflict shape eval.py already documents:
+# 0025's mm.h hunk expects `DEFAULT_MAX_MAP_COUNT` already changed to
+# `INT_MAX` by 0004 (xanmod-zen-max-map-count), which a standalone/clean-tree
+# check by definition hasn't applied yet. Not a real conflict; resolved by
+# the real sequential apply below, not by editing 0025.
+#
+# CachyOS `kernel-patches` master moved to
+# d5db2a953637445998d2b0e5ab52ea9c04860a24, `linux-tkg` master to
+# 10b3ca99725ff2f71208f2bb795a4cf65b4982a4 — swept, nothing new for this
+# box (same categories rejected as the 7.2.2 sweep: laptop/handheld/iGPU/
+# Steam Deck hardware we don't have, or compiler-flag/no-evidence patches).
+#
+# Intel `linux-kernel-overlay` (`github.com/intel/linux-kernel-overlay`,
+# branch `mainline-tracking/v7.2`) swept for the first time — previously
+# marked "not used, 6.12-targeted" in CLAUDE.md, which was stale (that
+# branch tracks v7.2 now). 138 files under intel/patches/intel/, mostly:
+# 52 generic perf-subsystem patches (many staging APX/eGPR-SIMD-sampling
+# support for future ISA, not present on Raptor Lake), Xe/i915 DRM patches
+# (irrelevant — this is a 14900**KF**, no iGPU), a Nova-Lake-S-specific
+# pmc_core patch (future platform), and PCI VMD storage patches (this
+# box's NVMe is CPU-attached Gen4 x4, not VMD-enabled). REJECTED as a bulk
+# source, dated verdict recorded here so the next sweep doesn't re-derive
+# it — same treatment as Clear Linux/Valve, for the same reason (nothing
+# clears the applicability bar).
+#
+# One genuine exception found and NOT yet taken:
+# intel/patches/intel/0001-powercap-intel_rapl-Sign-extend-the-PMU-delta-on-coun.rapl
+# (a8b842366f8f, "powercap: intel_rapl: Sign-extend the PMU delta on
+# counter wraparound", Li Yifan, 2026-08-14) — verified NOT an ancestor of
+# v7.2.5 or of kernel-org mainline (`git merge-base --is-ancestor
+# a8b842366f8f v7.2.5` and `...master` both fail), queued via the linux-pm
+# tree for v7.3, not backported to 7.2.x yet. This is a real RAPL PMU
+# counter bug, and RAPL is exactly what Phase 5's `turbostat --show
+# PkgWatt` bench readings depend on. Not added this bump — it needs the
+# same `git apply --check` treatment as everything else here, and the
+# "real gate" per this file's own rule is the sequential apply, not a
+# standalone spot-check. Left for the next sweep to actually try applying
+# and compiling, rather than added on the strength of a research note
+# alone (the RAPL section of this file is the freshest reminder of what
+# happens when reachability gets treated as sufficient evidence).
 
 ../custom/0001-cachyos-bore-7.2.patch
-0002-xanmod-zen-vmscan-swap.patch
+../custom/0002-xanmod-vmscan-swappiness-7.2.5.patch
 0003-xanmod-zen-vfs-cache.patch
 0004-xanmod-zen-max-map-count.patch
 0005-xanmod-zen-500hz-timer.patch

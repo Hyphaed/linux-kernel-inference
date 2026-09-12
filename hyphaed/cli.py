@@ -54,20 +54,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-y", "--yes", action="store_true", help="auto-accept non-hard prompts")
     p.add_argument("--preset", default="auto", help=f"preset name (default: auto — detected from hardware). Available: {','.join(presets.list_available()) or 'none'}")
     p.add_argument("--phase", choices=phases.ORDER + ["all"], default="all", help="run a single phase (default: all)")
-    # Default target/source-mode as of 2026-08-28: kernel.org 7.2.2 stable —
-    # released 2026-08-28 with a real fix (inet: frags: strip GSO state
-    # before reassembly, closes an unprivileged local DoS), validated
-    # end-to-end (source fetch -> patch -> configure -> build -> package,
-    # all green; provenance cross-checked against an independently-fetched
-    # tarball with zero diff outside patch-touched files) and covered by
-    # its own series at patches/kernel-org-7.2/ — see the "7.2.2 bump" note
-    # there for the full verification record. Install + reboot audit is
-    # still pending (a system-changing action, left for the operator).
+    # Default target/source-mode as of 2026-09-12: kernel.org 7.2.5 stable —
+    # this is the kernel actually booted (uname -r == 7.2.5-hyphaed), full
+    # pipeline validated end-to-end and covered by its own series at
+    # patches/kernel-org-7.2/ — see the "7.2.5 bump" note there for the full
+    # verification record, including the one pin that needed real work
+    # (0002's straight-dump reachability check was not enough — see that
+    # note before assuming the same shortcut works on the next bump).
     # `hyphaed` with NO flags is meant to be the one good command — bump
     # --target here when a newer kernel.org stable lands and has been
     # validated the same way, rather than expecting every invocation to
     # pass it explicitly.
-    p.add_argument("--target", default="7.2.2", help="target kernel.org stable version, e.g. 7.2.2. Bump this default after validating a newer kernel.org stable release, or run `hyphaed list-versions` to see the last 5 releases with dates.")
+    p.add_argument("--target", default="7.2.5", help="target kernel.org stable version, e.g. 7.2.5. Bump this default after validating a newer kernel.org stable release, or run `hyphaed list-versions` to see the last 5 releases with dates.")
     p.add_argument(
         "--source-mode", choices=["kernel-org"], default="kernel-org",
         help="kernel.org is the only source: clones the stable tag given by --target from the "
