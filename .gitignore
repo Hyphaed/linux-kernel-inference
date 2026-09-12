@@ -65,4 +65,4 @@ copyfail-check/
 # third-party PDFs fetched from arXiv, and the notes carry other people's full
 # text. Our own prose about that reading lives in docs/research/ and IS tracked.
 .hyperresearch/
-research/
+/research/
