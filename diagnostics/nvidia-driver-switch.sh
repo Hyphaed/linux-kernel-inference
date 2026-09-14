@@ -54,7 +54,11 @@ RUNNING_MOD="$(sed -n 's/^NVRM version: .*Module for x86_64 *\([0-9.]*\).*/\1/p'
 USERSPACE="$(basename "$(readlink -f /usr/lib/x86_64-linux-gnu/libcuda.so.1 2>/dev/null)" 2>/dev/null | sed 's/^libcuda\.so\.//')"
 echo "  kernel module   : ${RUNNING_MOD:-not loaded}"
 echo "  userspace libcuda: ${USERSPACE:-unknown}"
-echo "  packaging       : $(dpkg -l 'nvidia-driver-*-open' 2>/dev/null | awk '/^ii/{print $2" "$3}' | head -1 || echo 'NVIDIA repo (nvidia-open)')"
+# Captured now, before any switch happens, so the rollback hint at the end
+# can name the package to reinstall -- by the time the switch has run, this
+# box's PREVIOUS packaging (e.g. nvidia-dkms-595-open) is typically gone.
+PREV_PKG="$(dpkg-query -W -f='${Package}\n' 'nvidia-driver-*-open' 'nvidia-dkms-*-open' 2>/dev/null | sort -u | head -1)"
+echo "  packaging       : ${PREV_PKG:-NVIDIA repo (nvidia-open)}"
 echo "  running kernel  : $(uname -r)"
 
 if [ -n "$RUNNING_MOD" ] && [ -n "$USERSPACE" ] && [ "$RUNNING_MOD" != "$USERSPACE" ]; then
@@ -199,8 +203,16 @@ else
   bad "nvidia-open is NOT installed -- the switch did not happen"
   exit 1
 fi
-if dpkg -l 'nvidia-driver-*-open' 2>/dev/null | grep -q '^ii'; then
-  bad "Ubuntu's nvidia-driver-*-open is STILL installed alongside NVIDIA's."
+# Not just nvidia-driver-*-open: a compute-only install (dkms + kernel-source
+# + utils + firmware + kernel-common + libnvidia-compute, no
+# nvidia-driver-*-open at all) leaves the same class of leftover under a
+# different name, e.g. nvidia-dkms-595-open surviving alongside nvidia-open --
+# two DKMS sources both registered as "nvidia". Confirmed 2026-09-14.
+LEFTOVER_PATTERNS=(nvidia-driver-\*-open nvidia-dkms-\*-open nvidia-kernel-source-\*-open nvidia-utils-\*)
+LEFTOVERS="$(dpkg -l "${LEFTOVER_PATTERNS[@]}" 2>/dev/null | awk '/^ii/{print $2}')"
+if [ -n "$LEFTOVERS" ]; then
+  bad "Ubuntu's NVIDIA packaging is STILL installed alongside NVIDIA's own:"
+  echo "$LEFTOVERS" | sed 's/^/      /'
   echo "      That is a half-switched state. Investigate before rebooting."
   exit 1
 fi
@@ -263,7 +275,10 @@ echo "      nvidia-smi"
 echo "      cat /proc/driver/nvidia-fs/stats | head -3"
 echo
 echo "  If the GPU does not come back:"
-echo "      sudo apt install --reinstall nvidia-driver-595-open"
+# PREV_PKG was captured at the top, before the switch -- by now the previous
+# packaging (e.g. nvidia-dkms-595-open, on a compute-only box with no
+# nvidia-driver-*-open at all) is typically already gone from `dpkg -l`.
+echo "      sudo apt install --reinstall ${PREV_PKG:-nvidia-dkms-<previous-branch>-open}"
 echo "      sudo apt remove $PIN_PKG"
 echo "  or pick -generic from GRUB and repair from there."
 
