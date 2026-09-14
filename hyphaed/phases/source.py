@@ -207,6 +207,88 @@ def _git_stable_tags(repo_dir: Path, n: int = 3, refresh: bool = True) -> list[s
     return tags
 
 
+def _ls_remote_stable_tags(n: int = 5) -> list[str]:
+    """Fetch the newest N stable (non-rc) base versions straight from
+    kernel.org via `git ls-remote`, no local clone required.
+
+    Found 2026-09-14: `list-versions` returned `{"releases": []}` and the
+    wizard printed "no local kernel.org mirror / no network" even though the
+    network was fine — `_git_stable_tags()` is local-mirror-only by
+    construction (`if not repo_dir.is_dir(): return []`), and
+    `github/kernelorg/linux` had simply never been cloned. A bare
+    `ls-remote --tags` against kernel.org answers in ~1s and transfers no
+    objects, so there is no reason a missing mirror should force manual
+    entry. Bounded by the same `_TAG_PROBE_TIMEOUT_S` and
+    `GIT_TERMINAL_PROMPT=0` as the probe in `_refresh_stable_tags()`.
+    """
+    net_env = {"GIT_TERMINAL_PROMPT": "0"}
+    try:
+        r = run(["git", "ls-remote", "--tags", "--refs", KERNEL_ORG_GIT],
+                check=False, force=True, timeout=_TAG_PROBE_TIMEOUT_S, env=net_env)
+    except subprocess.TimeoutExpired:
+        log.warn(f"tag probe against kernel.org exceeded {_TAG_PROBE_TIMEOUT_S:.0f}s")
+        return []
+    if not r.ok():
+        return []
+
+    versions: list[tuple[tuple[int, ...], str]] = []
+    for line in r.stdout.splitlines():
+        if "refs/tags/" not in line:
+            continue
+        tag = line.rsplit("refs/tags/", 1)[-1].strip()
+        if "rc" in tag:
+            continue
+        # Same two shapes as _newest_stable(): vX.Y (a .0 release, e.g. v7.2
+        # for 7.2.0) and vX.Y.Z.
+        m = re.match(r"^v?(\d+)\.(\d+)(?:\.(\d+))?$", tag)
+        if not m:
+            continue
+        major, minor, patch = (int(g or 0) for g in m.groups())
+        base = f"{major}.{minor}.{patch}" if m.group(3) else f"{major}.{minor}"
+        versions.append(((major, minor, patch), base))
+
+    versions.sort(key=lambda pair: pair[0], reverse=True)
+    seen: set[str] = set()
+    out: list[str] = []
+    for _, base in versions:
+        if base in seen:
+            continue
+        seen.add(base)
+        out.append(base)
+        if len(out) >= n:
+            break
+    return out
+
+
+def _kernel_org_release_dates() -> dict[str, str]:
+    """Best-effort {base_version: isodate} from kernel.org's releases.json.
+
+    Only exposes the CURRENT stable/longterm/mainline tips, not a full
+    history — see `_stable_tags_with_dates()`'s docstring for why the local
+    mirror's tag commit date is preferred when it's available. This is the
+    fallback used to date the tags `_ls_remote_stable_tags()` returns, since
+    ls-remote itself carries no dates. Returns {} on any network or parse
+    failure — a missing date must never be the reason a version fails to
+    show up in the list.
+    """
+    import json as _json
+    r = run(["curl", "-sf", "--max-time", "15", "https://www.kernel.org/releases.json"],
+            check=False, force=True)
+    if not r.ok() or not r.stdout.strip():
+        return {}
+    try:
+        data = _json.loads(r.stdout)
+    except ValueError:
+        return {}
+    out: dict[str, str] = {}
+    for rel in data.get("releases", []):
+        ver = rel.get("version")
+        date = (rel.get("released") or {}).get("isodate")
+        if ver and date:
+            out[str(ver).lstrip("v")] = date
+    return out
+
+
 _KERNEL_SOURCE_REPOS = {"kernelorg", "xanmod"}  # cachyos/tkg are script/config repos, not kernel trees
 
 
@@ -235,8 +317,24 @@ def _stable_tags_with_dates(repo_dir: Path, n: int = 5) -> list[tuple[str, str]]
     offline once the mirror has been cloned/fetched, unlike querying
     kernel.org's releases.json, which only exposes the CURRENT stable/
     longterm/mainline pointers, not a history of the last N point releases.
+
+    When no local mirror exists (`repo_dir` was never cloned), falls back to
+    `_ls_remote_stable_tags()` + `_kernel_org_release_dates()` — a missing
+    mirror is a convenience gap, not a reason to report zero releases (see
+    `_ls_remote_stable_tags()`'s docstring for the bug this fixes). A date
+    kernel.org's releases.json doesn't cover (it only carries the current
+    stable/longterm/mainline tips) comes back as "" rather than "unknown",
+    to distinguish "not in that feed" from "git log failed on a tag we have
+    locally".
     """
     tags = _git_stable_tags(repo_dir, n)
+    if not tags:
+        remote_vers = _ls_remote_stable_tags(n)
+        if not remote_vers:
+            return []
+        dates = _kernel_org_release_dates()
+        return [(v, dates.get(v, "")) for v in remote_vers]
+
     out: list[tuple[str, str]] = []
     for tag in tags:
         m = re.match(r"^v?(\d+\.\d+(?:\.\d+)?)", tag)
@@ -252,11 +350,15 @@ def _pick_kernel_version_interactive(n: int = 5) -> tuple[str, str] | None:
     """Show the last N kernel.org stable releases (with release dates) plus a
     'custom version' option, and prompt for selection.
 
-    kernel-org is the sole source mode, so this only ever offers tags from
-    the local kernelorg mirror — no other repo is shown.
+    kernel-org is the sole source mode, so this only ever offers kernel.org
+    releases — no other repo is shown. Tags come from the local kernelorg
+    mirror when it exists; `_stable_tags_with_dates()` falls back to a
+    direct `git ls-remote` against kernel.org when it doesn't, so a missing
+    mirror alone does not return None here — only mirror-absent-AND-
+    network-unreachable does.
 
-    Returns (base_semver, "kernelorg") or None if no local mirror exists.
-    base_semver is the X.Y.Z part only (e.g. "7.1.7").
+    Returns (base_semver, "kernelorg") or None if neither source produced a
+    release list. base_semver is the X.Y.Z part only (e.g. "7.1.7").
     """
     from ..util.prompts import select as prompt_select, text as prompt_text
 
@@ -264,7 +366,7 @@ def _pick_kernel_version_interactive(n: int = 5) -> tuple[str, str] | None:
     repo_dir = _GITHUB_REPOS["kernelorg"]
     entries = _stable_tags_with_dates(repo_dir, n)
     if not entries:
-        log.warn("no local kernelorg mirror found — pass --target explicitly")
+        log.warn("no local kernelorg mirror and kernel.org is unreachable — pass --target explicitly")
         return None
 
     from rich.table import Table

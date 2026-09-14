@@ -102,6 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp_compare.add_argument("b", help="path to second .config (e.g. /boot/config-…-hyphaed)")
     sp_compare.add_argument("--only-changed", action="store_true", help="omit keys present in only one file")
     sub.add_parser("install-deps", help="apt-install all kernel build dependencies in one shot")
+    sp_checkdeps = sub.add_parser("check-deps", help="report dpkg transaction health + missing build deps, without installing or repairing anything (read-only; use `detect` or `install-deps` to act)")
+    sp_checkdeps.add_argument("--json", action="store_true", dest="checkdeps_json", help="emit machine-readable JSON")
     sp_scx = sub.add_parser("scx", help="install + switch sched_ext userspace schedulers")
     sp_scx.add_argument("action", choices=["install", "status", "run", "stop", "enable", "disable"],
                         help="install/status/run/stop — one-shot; enable/disable — persistent systemd unit")
@@ -645,7 +647,7 @@ def _cmd_bisect(ctx: Ctx) -> int:
 def _cmd_completion() -> int:
     """Emit a bash completion script."""
     from . import phases, presets
-    sub_cmds = "rebase detect list-presets status clean print-config uninstall prune verify doctor update-cmdline update-boot-config bisect completion compare install-deps scx snapshot fetch-patches"
+    sub_cmds = "rebase detect list-presets status clean print-config uninstall prune verify doctor update-cmdline update-boot-config bisect completion compare install-deps check-deps scx snapshot fetch-patches"
     phases_str = " ".join(phases.ORDER)
     presets_str = " ".join(presets.list_available())
     script = f'''# hyphaed bash completion — `eval "$(hyphaed completion)"` or save to /etc/bash_completion.d/hyphaed
@@ -725,6 +727,47 @@ def _cmd_install_deps() -> int:
     run_sudo(["nala", "install", "-y", *BUILD_DEPS_PKGS])
     log.ok("build dependencies installed")
     return 0
+
+
+def _cmd_check_deps(emit_json: bool = False) -> int:
+    """Report-only preflight: dpkg transaction health + missing build deps.
+
+    Standalone diagnostic exposing the same `dpkg-checkbuilddeps` /
+    interrupted-transaction checks `hyphaed/phases/detect.py` runs live at
+    the start of every build (the `detect` phase already prompts to repair
+    interactively there — see `_check_dpkg_state()` /
+    `_ensure_build_deps()`). This command never installs or repairs
+    anything; it exists for scripting/CI or a quick "would detect complain"
+    check without kicking off a real run. To act: `hyphaed detect` (or a
+    full run), `hyphaed install-deps`, or `scripts/fix-dpkg-state.sh`
+    directly.
+    """
+    import json as _json
+    from .phases.detect import BUILD_DEPS_PKGS, _missing_packages, _dpkg_pending_count
+
+    pending = _dpkg_pending_count()
+    missing = _missing_packages(BUILD_DEPS_PKGS)
+
+    if emit_json:
+        print(_json.dumps({
+            "dpkg_interrupted": pending > 0,
+            "dpkg_pending_count": pending,
+            "missing": missing,
+        }, indent=2))
+        return 0 if pending == 0 and not missing else 1
+
+    if pending > 0:
+        log.warn(f"dpkg has an interrupted transaction ({pending} pending item(s)) — "
+                 f"run `sudo bash scripts/fix-dpkg-state.sh` or `hyphaed detect` to fix")
+    else:
+        log.ok("dpkg transaction state is clean")
+
+    if missing:
+        log.warn(f"missing {len(missing)} build dep(s): {' '.join(missing)} — run `hyphaed install-deps`")
+    else:
+        log.ok("all kernel build dependencies present")
+
+    return 0 if pending == 0 and not missing else 1
 
 
 def _cmd_scx(action: str, scheduler: str) -> int:
@@ -1157,7 +1200,8 @@ def _cmd_list_versions(count: int, emit_json: bool = False) -> int:
         if emit_json:
             print(_json.dumps({"releases": []}))
         else:
-            log.err("no local kernelorg mirror found at github/kernelorg/linux")
+            log.err("no local kernelorg mirror and kernel.org is unreachable — "
+                    "pass --target explicitly (e.g. --target 7.2.5)")
         return 1
 
     if emit_json:
@@ -1233,7 +1277,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Any --json subcommand owns stdout exclusively. Do this BEFORE the
     # banner, or the banner is the first thing a JSON consumer parses.
-    if getattr(args, "versions_json", False) or getattr(args, "mainline_json", False):
+    if (getattr(args, "versions_json", False) or getattr(args, "mainline_json", False)
+            or getattr(args, "checkdeps_json", False)):
         log.route_diagnostics_to_stderr()
 
     _banner_intro()
@@ -1276,6 +1321,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "install-deps":
         return _cmd_install_deps()
+
+    if args.cmd == "check-deps":
+        return _cmd_check_deps(emit_json=getattr(args, "checkdeps_json", False))
 
     if args.cmd == "scx":
         return _cmd_scx(args.action, args.scheduler)

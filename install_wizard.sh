@@ -302,7 +302,13 @@ for r in data.get("releases", []):
             menu_item "$(( i + 1 ))" "${VER_LIST[$i]}" "released ${DATE_LIST[$i]}"
         done
     else
-        warn "could not fetch the release list (no local kernel.org mirror / no network) — enter a version manually below"
+        # `hyphaed list-versions` now falls back to a bare `git ls-remote`
+        # against kernel.org when no local mirror exists (github/kernelorg
+        # was never cloned) — that fallback needs only network, not a
+        # mirror. An empty VER_LIST here means kernel.org itself was
+        # unreachable, not "no local mirror" (found 2026-09-14: this message
+        # blamed the mirror even when the network round-trip took ~1s).
+        warn "could not reach kernel.org — enter a version manually below"
     fi
     menu_item "c" "Custom version" "type any kernel.org version, e.g. 7.1.7"
     menu_item 0 "Back" ""

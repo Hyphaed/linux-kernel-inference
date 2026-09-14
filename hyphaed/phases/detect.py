@@ -54,7 +54,44 @@ _PKG_DESCRIPTIONS: dict[str, str] = {
 
 
 def _missing_packages(pkgs: list[str]) -> list[str]:
-    """Return the subset of pkgs that dpkg reports as not fully installed."""
+    """Return the subset of pkgs that the kernel build's own dependency gate
+    would reject.
+
+    `dpkg-query -W --showformat=${db:Status-Status}` reports "installed" for
+    a package that is unpacked-but-not-yet-configured, because dpkg-query
+    replays the pending transaction journal (/var/lib/dpkg/updates/) before
+    reading. `dpkg-checkbuilddeps` — the exact check `dpkg-buildpackage`
+    (and therefore `make bindeb-pkg`) performs — reads
+    /var/lib/dpkg/status directly and does NOT replay the journal, so it
+    correctly rejects that same package. Found 2026-09-14: detect reported
+    every build dep present, the build failed 10 minutes later on
+    `libssl-dev`, which `dpkg -l` showed as `ii` the whole time — its status
+    stanza was `install ok unpacked` with a stale Config-Version, left behind
+    by an interrupted `nala upgrade`. Using dpkg-checkbuilddeps here makes
+    detect agree with the tool that actually gates the build.
+    """
+    if shutil.which("dpkg-checkbuilddeps"):
+        depends = ", ".join(pkgs)
+        r = run(
+            ["dpkg-checkbuilddeps", "-d", depends, "/dev/null"],
+            check=False, force=True,
+        )
+        if r.ok():
+            return []
+        # stderr looks like:
+        #   dpkg-checkbuilddeps: error: unmet build dependencies: libssl-dev:native libssl-dev
+        m = re.search(r"unmet build dependencies:\s*(.+)", r.stderr)
+        if not m:
+            # Unexpected output shape — fall through to the dpkg-query path
+            # rather than silently reporting nothing missing.
+            pass
+        else:
+            unmet = {tok.split(":", 1)[0] for tok in m.group(1).split()}
+            return [p for p in pkgs if p in unmet]
+
+    # Fallback for systems without dpkg-dev (dpkg-checkbuilddeps ships in
+    # it) — same known blind spot as before: an interrupted transaction can
+    # still read as "installed" here.
     r = run(
         ["dpkg-query", "-W", "--showformat=${Package} ${db:Status-Status}\\n", *pkgs],
         check=False, force=True,
@@ -67,6 +104,72 @@ def _missing_packages(pkgs: list[str]) -> list[str]:
     return [p for p in pkgs if p not in installed]
 
 
+def _dpkg_pending_count() -> int:
+    """Count packages stuck mid-transaction: unreplayed journal entries in
+    /var/lib/dpkg/updates/, or status stanzas not settled at
+    "install ok installed" / "deinstall ok config-files" / "purge ok
+    not-installed". Mirrors scripts/fix-dpkg-state.sh's detection so detect
+    and the standalone repair script never disagree.
+    """
+    updates_dir = Path("/var/lib/dpkg/updates")
+    journal = 0
+    if updates_dir.is_dir():
+        journal = sum(1 for p in updates_dir.iterdir() if p.is_file())
+
+    status_path = Path("/var/lib/dpkg/status")
+    pending = 0
+    settled = ("install ok installed", "deinstall ok config-files", "purge ok not-installed")
+    try:
+        for line in status_path.read_text(errors="replace").splitlines():
+            if line.startswith("Status: ") and not line[len("Status: "):].strip().startswith(settled):
+                pending += 1
+    except OSError:
+        pass
+
+    return journal + pending
+
+
+def _check_dpkg_state(ctx) -> None:
+    """Detect an interrupted dpkg transaction before scanning for missing
+    packages — see `_missing_packages()` for why this matters: while dpkg is
+    in this state, `nala install` of the "missing" packages below will
+    itself fail (`Error: dpkg was interrupted`), so _ensure_build_deps()'s
+    auto-install can't self-heal without this running first.
+    """
+    if ctx.dry_run:
+        return
+    if _dpkg_pending_count() == 0:
+        return
+
+    log.warn(
+        "dpkg has an interrupted transaction: packages are unpacked but not "
+        "configured. `dpkg-query`/`dpkg -l` report them installed anyway "
+        "(they replay the pending journal); the kernel build's own "
+        "dependency gate does not, and will fail on one of them."
+    )
+
+    from ..util.prompts import confirm
+    script = Path(__file__).resolve().parents[2] / "scripts" / "fix-dpkg-state.sh"
+    if not confirm(f"run {script.name} now to repair (requires sudo)?", default=True):
+        log.warn("continuing with dpkg in an interrupted state — "
+                  "`nala install`/the build will likely fail")
+        return
+
+    from ..util.run import run_sudo, sudo_keepalive
+    # Prime the sudo credential with an uncaptured prompt BEFORE the captured
+    # run_sudo() call below. run_sudo() -> run() defaults to capture=True,
+    # which redirects stdout/stderr to a pipe; a password prompt inside a
+    # captured subprocess is invisible on the terminal but still blocks on
+    # stdin, which reads as the wizard silently hanging (the same failure
+    # mode documented in install_wizard.sh's run_phase()).
+    sudo_keepalive()
+    r = run_sudo(["bash", str(script)], check=False)
+    if not r.ok():
+        log.err("dpkg repair failed — resolve manually before continuing")
+        raise SystemExit(2)
+    log.ok("dpkg state repaired")
+
+
 def _ensure_build_deps(ctx) -> None:
     """Check all build-time packages and offer to install missing ones via nala.
 
@@ -75,6 +178,8 @@ def _ensure_build_deps(ctx) -> None:
     """
     if ctx.dry_run:
         return
+
+    _check_dpkg_state(ctx)
 
     missing = _missing_packages(BUILD_DEPS_PKGS)
     if not missing:
