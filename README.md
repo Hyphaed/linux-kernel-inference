@@ -154,6 +154,43 @@ is why a checkout is a few megabytes rather than a couple hundred gigabytes.
 `$KI_ROOT` in the lock files expands to your checkout, so the same lock
 resolves on any machine.
 
+## After reboot: verifying the install
+
+Pick `hyphaed` from the GRUB menu, then run the post-reboot check:
+
+```bash
+python -m hyphaed verify        # or: make verify
+```
+
+This is a battery of read-only assertions that the freshly-booted kernel
+actually behaves the way the wizard intended — not just that it booted.
+It checks: running kernel is the `-hyphaed` build, all CPU mitigations are
+still on, BORE is the active scheduler, `sched_ext` state, IOMMU, THP defrag
+default, the composed cmdline matches what was intended, NVIDIA/GreenBoost/
+VMware modules are loaded, DKMS status for the running kernel, zswap, CPU
+governor, hugepages, no failed systemd units, and one check per patch in the
+series (`vfs_cache_pressure`, whether `max_map_count`'s raise is masked by a
+later sysctl.d override, block-layer `rq_affinity`, NVMe APST latency, the
+dma-buf priority-hint UAPI from `0019`, `cache_ext` registration from
+`0023`, `nvidia-fs`). It prints a ✓/✗ table and exits non-zero if anything
+failed, so it's safe to script.
+
+`python -m hyphaed status` (or `make status`) is a faster, lighter check for
+just "is this actually a `-hyphaed` kernel and is it installed" — running
+kernel, installed `linux-image-*-hyphaed` packages, and whether GRUB's saved
+default entry still points at something installed.
+
+For the three target workloads specifically:
+
+```bash
+nvidia-smi                                    # AI inference / GPU
+vmware-modconfig --console --install-all      # VMware modules
+cat /sys/class/greenboost/greenboost/status   # GreenBoost
+```
+
+If anything's broken, reboot and pick `-generic` from GRUB — the stock
+kernel is never touched, so it's always the fallback.
+
 ## Testing
 
 ```bash
