@@ -47,6 +47,51 @@ def _target_series_version(ctx) -> str | None:
     return None
 
 
+def resolve_vendor_lock(ctx, repo_root: Path | None = None) -> Path | None:
+    """The VENDOR-kernel-org-<version>.lock file matching whatever kernel
+    this ctx is actually building — the SAME version `_series_file_for()`
+    would pick, so `patches/fetch.py` verifies the patches the real build
+    is about to apply, not some other series.
+
+    Resolution order, all reusing `_target_series_version()`'s own logic
+    (source_dir, then --target, both already version-agnostic — bump
+    cli.py's --target default to a new series and this follows with no
+    code change here):
+      1. version from ctx.source_dir / ctx.args.target, if the matching
+         lock exists on disk.
+      2. auto-discover: the newest patches/VENDOR-kernel-org-*.lock present
+         on disk, by version sort. This is the fallback for a bare
+         invocation with no ctx (no source fetched, no --target passed) —
+         e.g. the wizard's "Fetch patches only" screen, reached before any
+         kernel version is ever picked.
+      3. None if nothing is found at all — caller decides what that means
+         (bare fetch.py default, or a hard error).
+
+    Found live 2026-09-22: this screen used to hardcode "7.2" directly in
+    install_wizard.sh, which would have silently gone stale the moment a
+    7.3 series existed and --target's default moved on — the same class of
+    defect `_series_file_for()` was already written to prevent for the
+    real patch-apply path.
+    """
+    repo_root = repo_root or (ctx.repo_root if ctx is not None else None)
+    if repo_root is None:
+        return None
+
+    version = _target_series_version(ctx) if ctx is not None else None
+    if version:
+        cand = repo_root / "patches" / f"VENDOR-kernel-org-{version}.lock"
+        if cand.is_file():
+            return cand
+        log.warn(f"no VENDOR-kernel-org-{version}.lock on disk — falling back "
+                 f"to the newest available series lock")
+
+    locks = sorted(
+        (repo_root / "patches").glob("VENDOR-kernel-org-*.lock"),
+        key=lambda p: [int(x) for x in re.findall(r"\d+", p.stem)],
+    )
+    return locks[-1] if locks else None
+
+
 def _series_file_for(repo_root: Path, source_mode: str, ctx=None) -> Path:
     # ctx may override series dir (e.g. source phase resolved xanmod vs kernel-org)
     if ctx is not None and hasattr(ctx, "patch_series_dir") and ctx.patch_series_dir:

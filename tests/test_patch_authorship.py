@@ -230,6 +230,18 @@ _PREDATES_DISCLOSURE_RULE = {
     "0021-v3-pci-sysfs-document-link-speed-width-attrs.patch",
     "0015-kbuild-ubsan-extmod-opt-in.patch",
     "0005-kbuild-ubsan-extmod-opt-in.patch",
+    # Same two patches as 0015/0016 above, under their patches/kernel-org-7.2/
+    # staged destination filenames (patches/README.md documents this
+    # local-file asymmetry: fetch.py's lock can name a destination file
+    # differently from its custom/ source). Surfaced 2026-09-22 when
+    # `hyphaed fetch-patches` was fixed to resolve the real kernel-org-7.2
+    # lock instead of the dead legacy one — the staged copies had been
+    # carrying pre-fix content (From: hyphaed workstation tuning
+    # <noreply@local>, no Signed-off-by) for a while; refreshing them from
+    # the real lock corrected the author/SOB, which made this test see
+    # them as "new" under their second name.
+    "0013-nvme-lower-default-apst-latency.patch",
+    "0014-mm-thp-defrag-defer-madvise-default.patch",
     "0001-dma-buf-add-a-generic-compressed-content-descriptor.patch",
     "0001-dma-buf-add-a-generic-reclaim-priority-hint.patch",
 }
