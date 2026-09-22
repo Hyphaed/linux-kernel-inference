@@ -172,7 +172,7 @@ _detect_boot_free_mb() {
 # ── State helpers ─────────────────────────────────────────────────────────────
 STATE_FILE="$REPO_ROOT/state/ctx.json"
 
-PHASES=(detect source patch configure build package install postinstall)
+PHASES=(detect source patch configure security build package install postinstall)
 
 _phase_index() {
     local p="$1" i
@@ -210,7 +210,7 @@ screen_welcome() {
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
-    order = ["detect", "source", "patch", "configure", "build", "package", "install", "postinstall"]
+    order = ["detect", "source", "patch", "configure", "security", "build", "package", "install", "postinstall"]
     completed = set(d.get('phases_completed', []))
     v = ''
     for p in order:
@@ -227,11 +227,13 @@ EOF
     fi
 
     sep_label "Mode"
-    menu_item 1 "Full build"         "detect → source → … → postinstall"
-    menu_item 2 "Resume"             "continue from last checkpoint"
-    menu_item 3 "Single phase"       "run exactly one phase"
-    menu_item 4 "Fetch patches only" "python3 patches/fetch.py"
-    menu_item 0 "Quit"               ""
+    menu_item 1 "Full build"           "detect → source → … → postinstall"
+    menu_item 2 "Resume"               "continue from last checkpoint"
+    menu_item 3 "Single phase"         "run exactly one phase"
+    menu_item 4 "Fetch patches only"   "python3 -m hyphaed fetch-patches"
+    menu_item 5 "Checks & diagnostics" "verify · status · tune · doctor · security scan · deps — no kernel build"
+    menu_item 6 "Harden workstation"   "firewall · fail2ban · rootkit scanners · unattended updates · DNSCrypt · WAN exposure"
+    menu_item 0 "Quit"                 ""
     printf "\n"
 
     while true; do
@@ -241,8 +243,10 @@ EOF
             2) MODE="resume"; return ;;
             3) MODE="single"; return ;;
             4) MODE="fetch";  return ;;
+            5) MODE="checks"; return ;;
+            6) MODE="harden"; return ;;
             0) printf "\n"; exit 0 ;;
-            *) warn "Enter 0–4" ;;
+            *) warn "Enter 0–6" ;;
         esac
     done
 }
@@ -547,8 +551,19 @@ screen_fetch() {
     local logfile="$REPO_ROOT/out/logs/fetch_wizard.log"
     local rc=0
 
-    spinner_start "running patches/fetch.py"
-    python3 "$REPO_ROOT/patches/fetch.py" >"$logfile" 2>&1 || rc=$?
+    # Goes through `hyphaed fetch-patches`, NOT a bare `patches/fetch.py`
+    # call — the bare form defaults to patches/VENDOR.lock, the LEGACY
+    # ubuntu-source-mode lock (dead since --source-mode kernel-org became
+    # the sole mode, 2026-08-06) — confirmed live 2026-09-22: its stale pin
+    # for a shared patch file false-alarmed a sha mismatch, while the real
+    # kernel-org lock for the SAME on-disk file was correct the whole time.
+    # `hyphaed fetch-patches` resolves the right VENDOR-kernel-org-<ver>.lock
+    # itself (patch.py::resolve_vendor_lock — source_dir, then --target,
+    # then newest-on-disk) so this stays correct automatically whenever a
+    # newer series (7.3, …) becomes what --target's default points at —
+    # no version number to keep in sync here in bash.
+    spinner_start "running hyphaed fetch-patches"
+    python3 -m hyphaed fetch-patches >"$logfile" 2>&1 || rc=$?
     spinner_stop $rc
 
     if (( rc == 0 )); then
@@ -565,6 +580,143 @@ screen_fetch() {
     printf "\n"
     printf "  %sPress Enter to continue…%s" "$C_DIM" "$C_RESET"
     read -r
+}
+
+# ── Checks & diagnostics hub ─────────────────────────────────────────────────
+# One home base for everything that reads/reports on an already-installed
+# system, rather than each living as its own easy-to-forget top-level menu
+# entry. None of these build a kernel; all run live (never spinner-wrapped —
+# their whole output IS the result the operator came here to read) and loop
+# back to this same menu afterward, so several checks can be run in one
+# sitting without re-launching the wizard.
+#
+# _run_check <label> <cmd...> — the shared "run live, wait, return" body
+# every entry below is built from, so a new check is one line to add, not a
+# new screen function.
+#
+# Every command in this menu uses its exit code to report a VERDICT, not
+# process health: verify/tune/security-scan/check-deps all return non-zero
+# to mean "found something worth reviewing", the normal and expected
+# outcome on a system that hasn't had every knob turned yet — not a crash.
+# A real crash (an unhandled exception) already prints its own traceback in
+# the output just above this line, which the operator can see directly.
+# Framing a working report as "✗ exited 1" reads as the wizard breaking
+# when it did exactly its job — so this never uses the alarming fail()
+# styling, only a neutral note distinguishing "clean" from "found something".
+_run_check() {
+    local label="$1"; shift
+    clear
+    print_header
+    sep_label "$label"
+    printf "\n"
+    local rc=0
+    "$@" || rc=$?
+    printf "\n"
+    if (( rc == 0 )); then
+        ok "$label — clean, nothing to review"
+    else
+        warn "$label — found something to review above (this is the check working, not a crash)"
+    fi
+    printf "\n"
+    printf "  %sPress Enter to continue…%s" "$C_DIM" "$C_RESET"
+    read -r
+    return 0
+}
+
+screen_checks() {
+    while true; do
+        clear
+        print_header
+        sep_label "Checks & Diagnostics"
+        printf "\n"
+        note "None of these build a kernel — safe to run any time, in any order."
+        printf "\n"
+        menu_item 1 "Verify"              "post-reboot health check (mitigations, BORE, cmdline, DKMS, …)"
+        menu_item 2 "Status"              "is the running kernel hyphaed-built + module health"
+        menu_item 3 "Doctor"              "wide self-diagnostic: detect + verify + repo + driver/module health"
+        menu_item 4 "Tune — report"       "idempotent runtime/userspace tuning: what's wrong"
+        menu_item 5 "Tune — apply"        "fix what tune-report found"
+        menu_item 6 "Security scan"       "kernel-hardening-checker: kconfig + cmdline + sysctl"
+        menu_item 7 "Security scan apply" "writes the free-win sysctl fixes; proposes (never writes) cmdline/kconfig changes"
+        menu_item 8 "Check build deps"    "dpkg transaction health + missing build deps (read-only)"
+        menu_item 0 "Back"                ""
+        printf "\n"
+
+        prompt_choice "Select a check"
+        case "$REPLY" in
+            1) _run_check "Verify"              python3 -m hyphaed verify || true ;;
+            2) _run_check "Status"               python3 -m hyphaed status || true ;;
+            3) _run_check "Doctor"                python3 -m hyphaed doctor || true ;;
+            4) _run_check "Tune — report"        python3 -m hyphaed tune report || true ;;
+            5) _run_check "Tune — apply"         python3 -m hyphaed tune apply || true ;;
+            6) _run_check "Security scan"        python3 -m hyphaed security-scan report || true ;;
+            7)
+                if (( DRY_RUN )); then
+                    _run_check "Security scan apply (dry-run)" python3 -m hyphaed --dry-run security-scan apply || true
+                else
+                    _run_check "Security scan apply" python3 -m hyphaed security-scan apply || true
+                fi
+                ;;
+            8) _run_check "Check build deps"     python3 -m hyphaed check-deps || true ;;
+            0) return ;;
+            *) warn "Enter 0–8" ;;
+        esac
+    done
+}
+
+# ── Harden workstation ───────────────────────────────────────────────────────
+# Firewall, fail2ban, rootkit scanners, unattended security updates, DNSCrypt
+# status, and a WAN-exposure review — see hyphaed/hardening.py for the full
+# reasoning on what's included and what's deliberately NOT (no "anti-
+# fingerprint" package, no MAC randomization on a wired box, no claim that
+# hardening speeds anything up). `report` is read-only; `apply` runs real
+# `apt-get install` / `ufw` / `systemctl` commands via sudo, which is why
+# this screen — unlike the checks hub — needs the live-output branch: it can
+# genuinely prompt for a sudo password.
+screen_harden() {
+    while true; do
+        clear
+        print_header
+        sep_label "Harden Workstation"
+        printf "\n"
+        note "Quick report runs unprivileged — some items can't be fully"
+        note "confirmed without root (marked accordingly)."
+        printf "\n"
+        menu_item 1 "Quick report"                "hyphaed harden report — no sudo, no changes"
+        menu_item 2 "Full root diagnostic scan"    "diagnostics/harden-check-*.sh via sudo — ufw ruleset, real port ownership, auth.log, rootkit scan; installs its own scanner deps"
+        menu_item 3 "Apply fixes now"              "installs/configures whatever the quick report found missing (needs sudo)"
+        menu_item 0 "Back"                         ""
+        printf "\n"
+
+        prompt_choice "Select"
+        case "$REPLY" in
+            1)
+                printf "\n"
+                python3 -m hyphaed harden report || true
+                printf "\n"
+                printf "  %sPress Enter to continue…%s" "$C_DIM" "$C_RESET"
+                read -r
+                ;;
+            2)
+                printf "\n"
+                sep_label "Full root diagnostic scan  (live output — will prompt for sudo)"
+                sudo bash "$REPO_ROOT/diagnostics/harden-check-2026-09-22.sh" || true
+                printf "\n"
+                printf "  %sPress Enter to continue…%s" "$C_DIM" "$C_RESET"
+                read -r
+                ;;
+            3)
+                printf "\n"
+                sep_label "Harden Workstation — apply  (live output — will prompt for sudo)"
+                python3 -m hyphaed harden apply || true
+                printf "\n"
+                printf "  %sPress Enter to continue…%s" "$C_DIM" "$C_RESET"
+                read -r
+                ;;
+            0) return ;;
+            *) warn "Enter 0–3" ;;
+        esac
+    done
 }
 
 # ── Screen: done ──────────────────────────────────────────────────────────────
@@ -601,6 +753,16 @@ main() {
         exit 0
     fi
 
+    if [[ "$MODE" == "checks" ]]; then
+        screen_checks
+        exit 0
+    fi
+
+    if [[ "$MODE" == "harden" ]]; then
+        screen_harden
+        exit 0
+    fi
+
     screen_source_mode
 
     if [[ "$MODE" == "single" ]]; then
@@ -613,7 +775,7 @@ main() {
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
-    order = ["detect", "source", "patch", "configure", "build", "package", "install", "postinstall"]
+    order = ["detect", "source", "patch", "configure", "security", "build", "package", "install", "postinstall"]
     completed = set(d.get('phases_completed', []))
     v = ''
     for p in order:

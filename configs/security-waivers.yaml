@@ -1,0 +1,225 @@
+# Deliberate kernel-hardening-checker FAILs, and why each one is accepted.
+#
+# Read by hyphaed/security_scan.py::load_waivers(). Every entry needs a
+# `reason:` — an option_name with no reason is not a waiver, it's a TODO.
+# This file covers cmdline + sysctl FAILs (the two axes newly scanned
+# 2026-09-22 by `hyphaed security-scan`); kconfig-mode FAILs are reviewed
+# separately via `hyphaed security-scan apply`'s -g suggestion diff against
+# configs/fragments/20-mitigations-on.config at the next kernel bump, not
+# waived per-item here — 112 kconfig FAILs is too many to usefully track
+# this way, and most either already have a documented reason elsewhere in
+# this repo (CLAUDE.md's security notes) or need a real rebuild to change.
+#
+# Measured live 2026-09-22 on ncore (i9-14900KF / RTX 5070 / ASRock
+# B760M-ITX/D4): 36 cmdline FAILs, 17 sysctl FAILs. Not every FAIL below is
+# waived — several are genuinely worth fixing and are left unwaived on
+# purpose so `hyphaed security-scan report` keeps surfacing them until
+# someone decides. `hyphaed security-scan apply` fixes the sysctl subset
+# with no functional cost automatically (see _SYSCTL_SAFE_FIXES in
+# hyphaed/security_scan.py) without needing a waiver entry — a waiver is
+# for a FAIL that stays a FAIL by choice, not one that gets silently fixed.
+
+waivers:
+  # --- sysctl ---
+  - option_name: user.max_user_namespaces
+    reason: >
+      Unprivileged user namespaces are required by Chrome/Chromium's
+      sandbox, flatpak, and podman's rootless containers on this desktop.
+      Setting this to 0 disables userns entirely and breaks all three.
+      Confinement is handled at the LSM layer instead — patch 0024
+      (AppArmor userns restriction) mediates unprivileged userns_create()
+      rather than disabling it outright, which is the documented reason
+      that patch exists (see CLAUDE.md "0024 — AppArmor userns
+      restriction, and why it transitions").
+
+  - option_name: kernel.unprivileged_bpf_disabled
+    reason: >
+      This box runs sched_ext BPF schedulers (`hyphaed scx`) and
+      GreenBoost's dataflux BPF instrumentation. Disabling unprivileged BPF
+      would need every one of those reworked to run as root only, which
+      isn't how sched_ext is designed to be used on a desktop.
+
+  - option_name: kernel.io_uring_disabled
+    reason: >
+      configs/fragments/42-io-uring-bpf.config deliberately enables
+      io_uring for this box's I/O path. kernel.io_uring_disabled=2 would
+      make the compiled-in capability unreachable at runtime, which is the
+      same "compiled in but switched off" trap CLAUDE.md's Kconfig-pitfalls
+      section already documents for other options — don't repeat it here.
+
+  - option_name: kernel.sysrq
+    reason: >
+      Magic SysRQ is kept for recovery on a workstation with no remote
+      console — the only way to get a clean sync/reboot if the desktop
+      environment hangs. Trading that away for a hardening checkbox on a
+      single-user machine with physical access already required is a bad
+      trade.
+
+  - option_name: kernel.modules_disabled
+    reason: >
+      This box loads out-of-tree DKMS modules constantly (nvidia,
+      nvidia-fs, greenboost, vmware host modules) across every kernel
+      bump. kernel.modules_disabled=1 is a one-way ratchet for the
+      lifetime of the boot — setting it would break every DKMS
+      autoinstall this repo's postinstall phase depends on.
+
+  - option_name: kernel.kexec_load_disabled
+    reason: >
+      The composed cmdline reserves a crashkernel region
+      (`crashkernel=2G-4G:320M,...`) specifically so a kdump-style crash
+      capture can run via kexec. Disabling kexec load removes that
+      capability along with the hardening.
+
+  - option_name: net.ipv6.conf.all.accept_ra
+    reason: >
+      NetworkManager on this box relies on IPv6 SLAAC (accept_ra) for
+      address configuration on the wired interface. Disabling it needs a
+      static IPv6 config or DHCPv6 first — not done blindly by a security
+      scanner.
+    followup: "revisit if/when this network moves to static IPv6 addressing"
+
+  - option_name: net.ipv6.conf.default.accept_ra
+    reason: same as net.ipv6.conf.all.accept_ra above.
+
+  - option_name: kernel.yama.ptrace_scope
+    reason: >
+      GreenBoost's own diagnostics and gdb-based debugging on this
+      development workstation rely on ptrace across sibling processes
+      (ptrace_scope=1, the current value). ptrace_scope=3 (kspp's
+      recommendation, "no ptrace at all without CAP_SYS_PTRACE") would
+      break routine debugging on the machine this repo is developed on.
+
+  - option_name: kernel.perf_event_paranoid
+    reason: >
+      turbostat, perf record, and this repo's own diagnostics/bench-*.sh
+      A/B harness all need perf_event_paranoid=2 (the current value) for
+      unprivileged performance-counter access. perf_event_paranoid=3
+      (kspp's recommendation) would make every "no evidence of benefit, no
+      change" measurement this repo's CLAUDE.md requires need sudo, which
+      is a real workflow cost for a machine used for performance work.
+
+  # --- cmdline ---
+  - option_name: iommu
+    reason: >
+      iommu=pt (passthrough), not iommu=force, is CLAUDE.md's own
+      documented, verified-optimal setting for this single-GPU box — see
+      "Reviewed, no action (2026-07-30 audit)" / PCIe MPS section.
+      iommu=force adds DMA translation overhead this workload doesn't
+      need.
+
+  - option_name: intel_iommu
+    reason: >
+      intel_iommu=on,igfx_off is deliberate: igfx_off excludes the
+      integrated GPU from IOMMU management because this box runs a
+      discrete RTX 5070 and the iGPU is unused — kernel-hardening-checker
+      wants a bare "on" with no qualifier, which would needlessly manage a
+      GPU nothing uses.
+
+  - option_name: mitigations
+    reason: >
+      mitigations=auto (not auto,nosmt) is deliberate — nosmt disables
+      hyperthreading, a real throughput cost on a 24C/32T i9-14900KF used
+      for both local inference and gaming, for a threat model (SMT-based
+      side-channel from an untrusted co-tenant) that doesn't apply to a
+      single-user workstation. All CPU mitigations otherwise stay ON per
+      this repo's own hard constraint (hyphaed/grub.py refuses
+      mitigations=off outright).
+
+  - option_name: nosmt
+    reason: same tradeoff as `mitigations` above — SMT stays on for throughput.
+
+  - option_name: debugfs
+    reason: >
+      NVIDIA's driver stack and GreenBoost's own diagnostics read debugfs
+      nodes for GPU/driver state on this development workstation.
+      debugfs=off would break diagnostics this repo actively uses.
+
+  - option_name: ia32_emulation
+    reason: >
+      Steam/Proton (this box's gaming workload, per the `gaming-ai-vm`
+      preset) still runs some 32-bit game binaries under ia32 emulation.
+      Disabling it breaks that class of game outright.
+
+  - option_name: vsyscall
+    reason: >
+      Not yet verified safe on this box's userspace (glibc version, VMware
+      guest tools, and any legacy binary that might still probe the
+      vsyscall page). Left unwaived deliberately — this is a genuine
+      candidate for `hyphaed security-scan apply`'s cmdline-diff proposal
+      at the next reboot-gated tuning pass, not a permanent tradeoff.
+    followup: "test with vsyscall=none on a scratch boot before adopting"
+
+  # --- cmdline, added 2026-09-22 reviewing the cmdline-diff proposal list ---
+  - option_name: pti
+    reason: >
+      `cat /sys/devices/system/cpu/vulnerabilities/meltdown` reads "Not
+      affected" on this Raptor Lake i9-14900KF — the silicon already fixes
+      Meltdown in hardware. `pti=on` would force Page Table Isolation's
+      syscall/context-switch overhead for a mitigation this CPU doesn't
+      need; `mitigations=auto` already gets this right dynamically per-CPU,
+      which a static cmdline flag can't.
+
+  - option_name: cfi
+    reason: >
+      `grep CONFIG_CFI_CLANG /boot/config-*` is absent — this kernel is
+      built with GCC (`CONFIG_CC_IS_GCC=y`, and CLAUDE.md rejected a
+      CachyOS dkms-clang patch specifically because "we build with gcc").
+      `cfi=kcfi` targets CONFIG_CFI_CLANG's kcfi scheme, which is a
+      Clang-only kernel feature; on this tree the flag is a no-op at best.
+
+  - option_name: module.sig_enforce
+    reason: >
+      `journalctl -b | grep verification` shows, every boot: "vmmon: module
+      verification failed: signature and/or required key missing —
+      tainting kernel". vmmon carries a real PKCS#7 signature (confirmed via
+      `modinfo vmmon`) but the running kernel's trusted keyring doesn't
+      accept it. Today that's a taint bit; with sig_enforce=1 it becomes a
+      hard refusal to load, breaking VMware (the gaming-ai-vm preset's VM
+      workload) outright.
+    followup: "fix the DKMS module-signing key trust chain first, then this waiver can be dropped"
+
+  - option_name: lockdown
+    reason: >
+      Same root cause as module.sig_enforce above — lockdown's integrity
+      checks independently gate unsigned/unverifiable module loading, and
+      vmmon's signature verification already fails on this box every boot.
+      confidentiality is the strictest level and would hit that same
+      failure, this time as a hard block rather than a taint.
+    followup: "same as module.sig_enforce — revisit once the signing key trust chain is fixed"
+
+  - option_name: hash_pointers
+    reason: >
+      This is a development workstation that debugs its own kernel (see
+      the ptrace_scope waiver above for the same standing reason).
+      hash_pointers=always hides real %p pointer values from dmesg/ftrace
+      even for root, which works against exactly that use case.
+
+  - option_name: iommu.strict
+    reason: >
+      Forces synchronous per-unmap IOTLB invalidation, trading DMA
+      throughput for protection against a use-after-free-via-DMA attack
+      class. This box's whole PCIe/GDS/P2PDMA substrate
+      (configs/fragments/33-pcie-dma-substrate.config, the dma-buf priority/
+      compression RFCs) exists to optimize GPU↔NVMe DMA throughput — the
+      exact path this would tax. No A/B measurement exists either way;
+      needs diagnostics/bench-*.sh evidence before adopting, per this
+      repo's "no evidence of benefit, no change" rule.
+    followup: "measure with diagnostics/bench-nvme.sh or a GDS-path benchmark before adopting"
+
+  - option_name: slab_nomerge
+    reason: >
+      Real memory-footprint cost (more distinct slab caches, more internal
+      fragmentation) on a box already measured tight on headroom
+      (docs/research: 1.8 GB VRAM headroom at baseline). No A/B evidence
+      this is worth the tradeoff for this workload.
+    followup: "measure real memory-pressure impact before adopting"
+
+  - option_name: init_on_free
+    reason: >
+      Zeroing freed heap memory has a documented, real throughput cost on
+      allocator-heavy workloads (widely measured elsewhere at several
+      percent). Unmeasured on this box's actual inference/gaming workload.
+      Per this repo's evidence-gate rule, needs diagnostics/bench-*.sh
+      before adopting, not adopted on the strength of the security argument
+      alone.
+    followup: "measure with diagnostics/bench-mm.sh before adopting"

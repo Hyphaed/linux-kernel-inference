@@ -54,18 +54,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-y", "--yes", action="store_true", help="auto-accept non-hard prompts")
     p.add_argument("--preset", default="auto", help=f"preset name (default: auto — detected from hardware). Available: {','.join(presets.list_available()) or 'none'}")
     p.add_argument("--phase", choices=phases.ORDER + ["all"], default="all", help="run a single phase (default: all)")
-    # Default target/source-mode as of 2026-09-12: kernel.org 7.2.5 stable —
-    # this is the kernel actually booted (uname -r == 7.2.5-hyphaed), full
-    # pipeline validated end-to-end and covered by its own series at
-    # patches/kernel-org-7.2/ — see the "7.2.5 bump" note there for the full
-    # verification record, including the one pin that needed real work
-    # (0002's straight-dump reachability check was not enough — see that
-    # note before assuming the same shortcut works on the next bump).
+    # Default target/source-mode as of 2026-09-22: kernel.org 7.2.7 stable.
+    # Full source->patch->configure->build->package pipeline validated —
+    # the 25-patch series (patches/kernel-org-7.2/) applies via a real
+    # sequential `git am --3way` against a freshly exported v7.2.7 tree with
+    # ZERO conflicts and zero re-pins (see the "7.2.7 bump" note in that
+    # series file for the full vendor-sweep record). NOT yet installed or
+    # booted — the actually-running kernel on this box is 7.2.6-hyphaed;
+    # install/reboot stays a deliberate separate step, same as every prior
+    # bump. (Correcting drift found this session: this comment previously
+    # claimed 7.2.5 was "the kernel actually booted" when the box had
+    # already moved to 7.2.6 without the default or this note being
+    # updated — don't trust this line as proof of what's running; check
+    # `uname -r` or `hyphaed status`.)
     # `hyphaed` with NO flags is meant to be the one good command — bump
     # --target here when a newer kernel.org stable lands and has been
     # validated the same way, rather than expecting every invocation to
     # pass it explicitly.
-    p.add_argument("--target", default="7.2.5", help="target kernel.org stable version, e.g. 7.2.5. Bump this default after validating a newer kernel.org stable release, or run `hyphaed list-versions` to see the last 5 releases with dates.")
+    p.add_argument("--target", default="7.2.7", help="target kernel.org stable version, e.g. 7.2.7. Bump this default after validating a newer kernel.org stable release, or run `hyphaed list-versions` to see the last 5 releases with dates.")
     p.add_argument(
         "--source-mode", choices=["kernel-org"], default="kernel-org",
         help="kernel.org is the only source: clones the stable tag given by --target from the "
@@ -123,6 +129,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp_versions.add_argument("--json", action="store_true", dest="versions_json", help="emit machine-readable JSON")
     sp_sync = sub.add_parser("sync-sources", help="git fetch (or --pull) all local kernel source repos: linux, linux-cachyos, kernel-patches, linux-tkg, kernel-research")
     sp_sync.add_argument("--pull", action="store_true", help="git pull --ff-only instead of git fetch (integrates changes; may break VENDOR.lock SHAs)")
+    sp_secscan = sub.add_parser("security-scan", help="kernel-hardening-checker across kconfig+cmdline+sysctl, cross-referenced against configs/security-waivers.yaml (see hyphaed/security_scan.py)")
+    sp_secscan.add_argument("action", nargs="?", default="report", choices=["report", "apply"],
+                             help="report (default): scan + classify, write nothing; apply: also write the sysctl drop-in for waiver-free FAILs with no functional cost (respects top-level --dry-run)")
+    sp_secscan.add_argument("--json", action="store_true", dest="security_json", help="emit machine-readable JSON")
+    sp_harden = sub.add_parser("harden", help="workstation hardening: firewall, fail2ban, rootkit scanners, unattended security updates, DNSCrypt status, WAN-exposure review (see hyphaed/hardening.py)")
+    sp_harden.add_argument("action", nargs="?", default="report", choices=["report", "apply"],
+                            help="report (default): show current state, install nothing; apply: install/configure what's missing (needs sudo — run in a real terminal, not scripted)")
 
     return p
 
@@ -307,6 +320,153 @@ def _cmd_tune(ctx: Ctx, action: str) -> int:
         log.err(f"still not fixed: {', '.join(still_broken)}")
         return 1
     log.ok("all tuning items now correct")
+    return 0
+
+
+def _cmd_security_scan(ctx: Ctx, action: str, emit_json: bool = False) -> int:
+    """Report-only by default. `apply` writes only the sysctl drop-in for
+    waiver-free FAILs with no stated functional cost — cmdline and kconfig
+    changes are always propose-only (see hyphaed/security_scan.py's module
+    docstring for why: both need a reboot or a rebuild, so a wizard writing
+    them unattended is the same failure class grub.py's confirm-gated
+    write_dropin already goes out of its way to avoid).
+    """
+    import json
+    from . import security_scan as S
+
+    config_path = None
+    running_kver = platform.release()
+    if running_kver:
+        cand = Path(f"/boot/config-{running_kver}")
+        if cand.exists():
+            config_path = cand
+    if config_path is None and ctx.source_dir and (ctx.source_dir / ".config").exists():
+        config_path = ctx.source_dir / ".config"
+
+    out_dir = ctx.repo_root / "out" / "security"
+    results = S.scan_all(config_path, out_dir)
+    waivers = S.load_waivers()
+    classified = S.classify(results, waivers)
+
+    if emit_json:
+        payload = {
+            "config_path": str(config_path) if config_path else None,
+            "by_mode": classified["by_mode"],
+            "unwaived": classified["unwaived"],
+        }
+        print(json.dumps(payload, indent=2))
+        return 1 if classified["unwaived"] else 0
+
+    for mode, s in classified["by_mode"].items():
+        if not s.get("ran"):
+            log.warn(f"{mode}: NOT RUN (this is not a pass)")
+            continue
+        log.info(f"{mode}: {s['fail']} FAIL ({s['waived']} waived, {s['unwaived']} unwaived) / "
+                  f"{s['ok']} OK of {s['total']}")
+
+    unwaived = classified["unwaived"]
+    if action != "apply":
+        if unwaived:
+            log.warn(f"{len(unwaived)} unwaived FAIL(s) across all axes — "
+                     f"see {out_dir}/, or `hyphaed security-scan apply` to fix the free wins")
+            return 1
+        log.ok("no unwaived FAILs")
+        return 0
+
+    fixes = S.propose_sysctl_fixes(unwaived)
+    if fixes:
+        S.apply_sysctl_fixes(fixes, dry_run=ctx.dry_run)
+    else:
+        log.info("no sysctl fix in this tool's safe-fix list applies here")
+
+    cmdline_unwaived = [e for e in unwaived
+                        if e.get("type") == "cmdline" and e.get("option_name") not in fixes]
+    cmdline_tokens = S.propose_cmdline_diff(cmdline_unwaived)
+    if cmdline_tokens:
+        log.info("cmdline changes proposed, NOT applied (reboot-gated, needs review):")
+        for t in cmdline_tokens:
+            log.console.print(f"    {t}")
+
+    kconfig_diff = S.generate_kconfig_suggestions("X86_64", out_dir)
+    if kconfig_diff:
+        log.info(f"kconfig hardening suggestions written to {kconfig_diff} — "
+                 f"review against configs/fragments/20-mitigations-on.config before the next bump")
+
+    remaining = len(unwaived) - len(fixes)
+    if remaining:
+        log.warn(f"{remaining} unwaived FAIL(s) still need a waiver or a fix — see {out_dir}/")
+        return 1
+    log.ok("all unwaived, auto-fixable FAILs applied")
+    return 0
+
+
+def _cmd_harden(ctx: Ctx, action: str) -> int:
+    """Workstation hardening: firewall, fail2ban, rootkit scanners,
+    unattended security updates, DNSCrypt status, WAN-exposure review.
+    `report` never installs or changes anything. `apply` runs real
+    `apt-get install` / `ufw` / `systemctl enable` commands via sudo — those
+    only work with a real interactive terminal for the password prompt, not
+    from a scripted/non-interactive invocation.
+    """
+    from . import hardening
+    from rich.table import Table
+
+    results = hardening.run_report()
+    t = Table(header_style="bold magenta")
+    t.add_column("item", style="cyan")
+    t.add_column("status")
+    t.add_column("detail", style="grey70")
+    needs_fix = []
+    for item, ok, detail in results:
+        t.add_row(item.name, "[ok]✓[/ok]" if ok else "[warn]○[/warn]", detail)
+        if not ok:
+            needs_fix.append(item)
+    log.console.print(t)
+
+    exposed = hardening.wan_exposed_services()
+    if exposed:
+        log.info(f"{len(exposed)} service(s) listening on ALL interfaces (0.0.0.0/[::]) — "
+                 f"reachable from the WAN if your router forwards the port:")
+        for addr, _ in exposed:
+            log.console.print(f"    {addr}")
+        log.info("this box's own firewall ruleset decides whether these are actually "
+                 "reachable — `sudo ufw status verbose` for the real answer; this tool "
+                 "can't see the router's port-forwarding table from inside the box")
+    else:
+        log.ok("no services listening on a wildcard (0.0.0.0/[::]) address")
+
+    if action != "apply":
+        if needs_fix:
+            log.warn(f"{len(needs_fix)} item(s) not yet in place — "
+                     f"`python -m hyphaed harden apply` in a real terminal to fix them")
+            return 1
+        log.ok("all hardening items already in place")
+        return 0
+
+    if not needs_fix:
+        log.ok("nothing to apply — all hardening items already correct")
+        return 0
+
+    from .util.run import sudo_keepalive
+    if not sudo_keepalive():
+        log.err("could not obtain sudo — apply needs a real terminal to prompt for your password")
+        return 1
+
+    for item in needs_fix:
+        if item.apply is None:
+            continue
+        log.info(f"applying: {item.name}")
+        try:
+            item.apply()
+        except Exception as exc:  # noqa: BLE001 — one item's failure must not skip the rest
+            log.err(f"{item.name}: apply failed — {exc}")
+
+    log.info("re-checking…")
+    still_broken = [item.name for item, ok, _ in hardening.run_report() if not ok]
+    if still_broken:
+        log.err(f"still not fixed: {', '.join(still_broken)}")
+        return 1
+    log.ok("all hardening items now correct")
     return 0
 
 
@@ -1100,18 +1260,38 @@ def _cmd_sync_sources(ctx: Ctx, pull: bool) -> int:
 
 
 def _cmd_fetch_patches(ctx: Ctx) -> int:
-    """Download + verify vendored patches (wraps patches/fetch.py)."""
+    """Download + verify vendored patches (wraps patches/fetch.py).
+
+    Resolves the lock file to whatever kernel-org series this ctx is
+    actually building, via patch.resolve_vendor_lock() — NOT fetch.py's own
+    bare default (patches/VENDOR.lock), which is the legacy ubuntu-mode
+    lock, dead since --source-mode kernel-org became the sole mode. Found
+    live 2026-09-22: a bare invocation reported a sha mismatch on a patch
+    whose real, currently-used lock entry was correct the whole time —
+    a false alarm about a file nothing in the real build pipeline reads.
+    """
     import subprocess, sys
+    from .phases.patch import resolve_vendor_lock
     patches_py = ctx.repo_root / "patches" / "fetch.py"
     if not patches_py.exists():
         log.err(f"patches/fetch.py not found at {patches_py}")
         return 2
+
+    lock = resolve_vendor_lock(ctx)
     cmd = [sys.executable, str(patches_py)]
+    if lock is not None:
+        cmd += ["--lock", str(lock)]
+        log.info(f"resolved lock: {lock.name}")
+    else:
+        log.warn("could not resolve a kernel-org series lock — falling back "
+                 "to fetch.py's own default (patches/VENDOR.lock, legacy "
+                 "ubuntu-mode)")
     log.info(f"running: {' '.join(cmd)}")
     r = subprocess.run(cmd, cwd=str(ctx.repo_root))
     if r.returncode != 0:
         log.err("patch fetch had failures — see output above")
-        log.info("hint: run `python patches/fetch.py --discover` to compute sha256 values for VENDOR.lock")
+        log.info(f"hint: run `python patches/fetch.py --discover --lock {lock or 'patches/VENDOR.lock'}` "
+                 f"to compute sha256 values")
     else:
         log.ok("all patches downloaded and verified")
     return r.returncode
@@ -1278,7 +1458,7 @@ def main(argv: list[str] | None = None) -> int:
     # Any --json subcommand owns stdout exclusively. Do this BEFORE the
     # banner, or the banner is the first thing a JSON consumer parses.
     if (getattr(args, "versions_json", False) or getattr(args, "mainline_json", False)
-            or getattr(args, "checkdeps_json", False)):
+            or getattr(args, "checkdeps_json", False) or getattr(args, "security_json", False)):
         log.route_diagnostics_to_stderr()
 
     _banner_intro()
@@ -1315,6 +1495,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "tune":
         return _cmd_tune(ctx, args.action)
+
+    if args.cmd == "security-scan":
+        return _cmd_security_scan(ctx, args.action, emit_json=getattr(args, "security_json", False))
+
+    if args.cmd == "harden":
+        return _cmd_harden(ctx, args.action)
 
     if args.cmd == "compare":
         return _cmd_compare(args.a, args.b, args.only_changed)
