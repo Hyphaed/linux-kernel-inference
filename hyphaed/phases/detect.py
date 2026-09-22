@@ -104,12 +104,50 @@ def _missing_packages(pkgs: list[str]) -> list[str]:
     return [p for p in pkgs if p not in installed]
 
 
+_DPKG_SETTLED_STATUS = frozenset({"not-installed", "config-files", "installed"})
+
+
+def _dpkg_status_is_pending(status_line: str) -> bool:
+    """A dpkg `Status:` line is `<want> <eflag> <status>` (Debian policy).
+    Only `eflag` and `status` say whether a package is genuinely
+    mid-transaction — `want` (unknown/install/hold/deinstall/purge) is an
+    independent axis dpkg tracks the OPERATOR'S intent with, not the
+    package's current condition.
+
+    Found live 2026-09-22: this repo's own "Check build deps" reported "2
+    pending item(s)" on a perfectly healthy box. The real stanzas:
+    `slack-desktop -> Status: hold ok installed` (a deliberately
+    `apt-mark hold`ed package, fully installed and fine — `want=hold`
+    reads exactly like an interrupted transaction to a check that only
+    recognizes the literal string "install ok installed") and
+    `thunderbird -> Status: install ok not-installed` (Thunderbird is
+    actually Flatpak-managed here — `org.mozilla.thunderbird_esr` — and
+    dpkg kept a stale never-completed tracking stanza for the apt package
+    that was never actually unpacked; `eflag=ok` + `status=not-installed`
+    is a fully settled terminal state, not a broken one).
+
+    The three previously-hardcoded "settled" strings
+    ("install ok installed" / "deinstall ok config-files" /
+    "purge ok not-installed") were themselves correct examples of settled
+    states — the bug was checking the WHOLE line against a short fixed
+    list instead of checking `eflag`/`status` structurally, which silently
+    excludes every other valid `want` value (hold, unknown, or a `status`
+    of not-installed/config-files reached via any `want` other than the
+    one example already listed).
+    """
+    fields = status_line.strip().split()
+    if len(fields) != 3:
+        return True  # malformed/unexpected shape — be conservative, not silent
+    _want, eflag, status = fields
+    return eflag != "ok" or status not in _DPKG_SETTLED_STATUS
+
+
 def _dpkg_pending_count() -> int:
     """Count packages stuck mid-transaction: unreplayed journal entries in
-    /var/lib/dpkg/updates/, or status stanzas not settled at
-    "install ok installed" / "deinstall ok config-files" / "purge ok
-    not-installed". Mirrors scripts/fix-dpkg-state.sh's detection so detect
-    and the standalone repair script never disagree.
+    /var/lib/dpkg/updates/, or status stanzas whose eflag/status pair isn't
+    fully settled (see _dpkg_status_is_pending). Mirrors
+    scripts/fix-dpkg-state.sh's detection so detect and the standalone
+    repair script never disagree.
     """
     updates_dir = Path("/var/lib/dpkg/updates")
     journal = 0
@@ -118,10 +156,9 @@ def _dpkg_pending_count() -> int:
 
     status_path = Path("/var/lib/dpkg/status")
     pending = 0
-    settled = ("install ok installed", "deinstall ok config-files", "purge ok not-installed")
     try:
         for line in status_path.read_text(errors="replace").splitlines():
-            if line.startswith("Status: ") and not line[len("Status: "):].strip().startswith(settled):
+            if line.startswith("Status: ") and _dpkg_status_is_pending(line[len("Status: "):]):
                 pending += 1
     except OSError:
         pass

@@ -48,10 +48,26 @@ err()   { printf '\xe2\x9c\x97  %s\n' "$*" >&2; }
 # ── Detection ──────────────────────────────────────────────────────────────
 # Two independent signals of an interrupted transaction:
 #   1. unreplayed journal files under /var/lib/dpkg/updates/
-#   2. any package stanza whose Status: line isn't "install ok installed"
-#      (this also naturally covers intentionally-removed packages sitting in
-#      "deinstall ok config-files", which are not broken — only "unpacked",
-#      "half-configured", "half-installed" etc. are actionable here)
+#   2. any package stanza whose Status: line's eflag/status pair isn't
+#      settled — NOT whether the whole "want eflag status" line matches one
+#      of a short fixed list. `Status:` is "<want> <eflag> <status>"
+#      (Debian policy); `want` (unknown/install/hold/deinstall/purge) is the
+#      OPERATOR'S intent, independent of whether the package's current
+#      state is actually mid-transaction.
+#
+#      Found live 2026-09-22: the three-string match this used to be
+#      ("install ok installed" / "deinstall ok config-files" /
+#      "purge ok not-installed") flagged two perfectly healthy packages as
+#      "pending" — `slack-desktop: Status: hold ok installed` (a
+#      deliberately `apt-mark hold`ed package) and
+#      `thunderbird: Status: install ok not-installed` (Thunderbird is
+#      actually Flatpak-managed here; dpkg kept a stale
+#      never-completed tracking stanza for the apt package). Both have
+#      eflag=ok and a fully-settled status; only `want` differed from the
+#      one example each axis happened to be hardcoded against. Only
+#      "unpacked", "half-configured", "half-installed",
+#      "triggers-awaited", "triggers-pending" status values (or a
+#      "reinstreq" eflag) mean something is actually broken here.
 journal_count() {
     find "$DPKG_UPDATES" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l
 }
@@ -60,7 +76,11 @@ pending_packages() {
     awk '
         /^Package: / { pkg = $2 }
         /^Status: /  {
-            if ($0 !~ /install ok installed/ && $0 !~ /deinstall ok config-files/ && $0 !~ /purge ok not-installed/)
+            n = split($0, f, " ")
+            eflag  = f[n-1]
+            status = f[n]
+            settled = (status == "not-installed" || status == "config-files" || status == "installed")
+            if (eflag != "ok" || !settled)
                 print pkg ": " $0
         }
     ' "$DPKG_STATUS"
