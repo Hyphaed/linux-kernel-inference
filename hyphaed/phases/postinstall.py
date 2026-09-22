@@ -338,27 +338,60 @@ def _check_dgx_parity_basics() -> None:
         log.warn("nvidia-peermem module not built for this kernel — DKMS may not have registered it")
 
     bridge_unit = Path("/etc/systemd/system/nvidia-pci-bridge-power.service")
-    if not bridge_unit.exists():
-        unit_body = (
-            "[Unit]\n"
-            "Description=Force PCIe bridge power control to 'on' (hyphaed DGX-parity port)\n"
-            "DefaultDependencies=no\n"
-            "After=sysinit.target local-fs.target\n"
-            "Before=basic.target\n\n"
-            "[Service]\n"
-            "Type=oneshot\n"
-            "ExecStart=/bin/sh -c "
-            "'for b in $(lspci -D -d ::0604 | awk \"{print \\$1}\"); "
-            "do echo on > /sys/bus/pci/devices/$b/power/control 2>/dev/null || true; done'\n\n"
-            "[Install]\n"
-            "WantedBy=basic.target\n"
-        )
+    bridge_script = Path("/usr/local/sbin/hyphaed-pci-bridge-power-on.sh")
+    # The shell logic used to live inline in ExecStart= as
+    # `/bin/sh -c '...awk "{print \$1}"...$b...'`. systemd's unit-file
+    # parser does its own backslash-escape and $VAR expansion on the
+    # ExecStart= value BEFORE the shell ever sees it — `\$1` isn't a
+    # recognized systemd escape (hence "Ignoring unknown escape sequences"
+    # on every boot, confirmed live 2026-09-22) and unescaped `$b`/`$1` risk
+    # systemd trying to substitute them as its own specifiers rather than
+    # shell positional/loop variables. A real script file sidesteps unit
+    # quoting entirely — same pattern this repo already uses for
+    # ssd-speed-guard.sh, called from a udev RUN+= rather than inlined.
+    script_body = (
+        "#!/bin/sh\n"
+        "# Written by hyphaed's postinstall phase. Forces PCIe bridge\n"
+        "# power/control to 'on' so bridges don't power-down (DGX-parity port).\n"
+        "for b in $(lspci -D -d ::0604 | awk '{print $1}'); do\n"
+        "    echo on > \"/sys/bus/pci/devices/$b/power/control\" 2>/dev/null || true\n"
+        "done\n"
+    )
+    unit_body = (
+        "[Unit]\n"
+        "Description=Force PCIe bridge power control to 'on' (hyphaed DGX-parity port)\n"
+        "DefaultDependencies=no\n"
+        "After=sysinit.target local-fs.target\n"
+        "Before=basic.target\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        f"ExecStart={bridge_script}\n\n"
+        "[Install]\n"
+        "WantedBy=basic.target\n"
+    )
+    script_stale = not bridge_script.exists() or bridge_script.read_text() != script_body
+    unit_stale = not bridge_unit.exists() or bridge_unit.read_text() != unit_body
+    if script_stale:
+        run_sudo(["tee", str(bridge_script)], input_str=script_body, check=False, capture=True)
+        run_sudo(["chmod", "755", str(bridge_script)], check=False)
+
+    if unit_stale:
+        # Deliberately re-checked even when bridge_unit ALREADY EXISTS, not
+        # just when it's missing — a box that installed a kernel before this
+        # fix landed has the OLD broken unit (inline `/bin/sh -c` with an
+        # unparseable ExecStart=) sitting on disk, and a fresh install would
+        # otherwise never touch it again, so the boot-time systemd warning
+        # this was written to fix would survive every future kernel bump.
+        # Confirmed live 2026-09-22: postinstall used to only write when the
+        # file was absent, which is exactly why the broken unit installed
+        # under 7.2.6 needed a separate diagnostics script to fix, rather
+        # than the next kernel's own postinstall run fixing it for free.
         run_sudo(["tee", str(bridge_unit)], input_str=unit_body, check=False, capture=True)
         run_sudo(["systemctl", "daemon-reload"], check=False)
         run_sudo(["systemctl", "enable", "--now", "nvidia-pci-bridge-power.service"], check=False)
-        log.ok("nvidia-pci-bridge-power.service installed and enabled (PCIe bridges won't power-down)")
+        log.ok("nvidia-pci-bridge-power.service installed/updated and enabled (PCIe bridges won't power-down)")
     else:
-        log.ok("nvidia-pci-bridge-power.service already installed")
+        log.ok("nvidia-pci-bridge-power.service already installed and current")
 
     if shutil.which("dcgmi"):
         log.ok("DCGM already installed")
