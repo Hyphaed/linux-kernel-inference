@@ -320,11 +320,15 @@ def advisories() -> list[Advisory]:
             "nvidia-fs and other PCI drivers warn 'error retrieving numa node' "
             "this boot — BIOS/ACPI doesn't associate the root bus with a node "
             "on this single-NUMA-node box",
-            "a drafted-but-unsent fix exists at "
-            "upstream-candidates/x86-pci-single-node-root-bus/ (defaults a "
-            "root bus to the only online node when firmware won't say) — "
-            "compile-tested, not authored/numbered/sent; connect the two "
-            "rather than re-deriving this",
+            "the fix is patch 0029 in patches/kernel-org-7.2/series "
+            "(patches/custom/0029-x86-pci-single-node-root-bus-node.patch), "
+            "promoted 2026-09-22 from the upstream-candidates/ draft — "
+            "authored, Assisted-by/Signed-off-by, compile-tested against a "
+            "real v7.2.7 tree, checkpatch clean. This is a `tune apply` "
+            "no-op regardless: fixing it needs a kernel install + reboot, "
+            "not a runtime knob. Its acceptance gate (this warning going to "
+            "0, tainted dropping by 2048) is still unverified — see "
+            "docs/tasks_patches.md T20.",
         ))
     return out
 

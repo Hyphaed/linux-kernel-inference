@@ -72,7 +72,10 @@ def test_cache_ext_applies_after_everything_that_touches_mm():
 
     It is NOT required to be dead last. 0024 trails it because that is the
     tree 0024 was authored and compile-tested against, and 0024 touches only
-    security/apparmor, which overlaps nothing else in the series.
+    security/apparmor, which overlaps nothing else in the series. 0029
+    (x86/pci single-node NUMA fix, added 2026-09-22) trails it for the same
+    reason: it touches only arch/x86/pci/acpi.c, which nothing else in this
+    series touches either.
     """
     entries = _series_entries()
     idx = {n: i for i, n in enumerate(entries)}
@@ -82,8 +85,9 @@ def test_cache_ext_applies_after_everything_that_touches_mm():
         "0025 must precede 0023 — both touch mm/vmscan.c, and the fragile one "
         "goes second so a conflict lands where we already know to look."
     )
+    _MM_SAFE = ("apparmor", "x86-pci-single-node-root-bus")
     for name in entries[idx[cache_ext] + 1:]:
-        assert "apparmor" in name, (
+        assert any(s in name for s in _MM_SAFE), (
             f"{name} applies after 0023. Only patches that cannot collide with "
             f"it in mm/ may do that; add the justification here if you add one."
         )

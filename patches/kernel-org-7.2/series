@@ -299,6 +299,121 @@
 # and compiling, rather than added on the strength of a research note
 # alone (the RAPL section of this file is the freshest reminder of what
 # happens when reachability gets treated as sufficient evidence).
+#
+# 7.2.6 bump (2026-09-14, backfilled 2026-09-22): built, installed, and
+# booted — `uname -r` == 7.2.6-hyphaed, `applied-series.json` records all 24
+# patches applied with 0 failed — but never written up here at the time.
+# Backfilled now, from the surviving artefacts (ctx.json, applied-series.json,
+# 4 .deb packages in out/debs/ timestamped Sep 14), rather than left silently
+# wrong for the next bump to trip over.
+#
+# 7.2.7 bump (2026-09-22): v7.2.7 released (commit
+# 80e08e73a287bece90d0a443ee48e4145c039b7f). kernel.ubuntu.com/mainline has
+# **no v7.2.7 amd64 build yet** (index tops out at v7.2.6; `CHECKSUMS` 404s) —
+# `_fetch_mainline_baseline_config`'s series-fallback recovers the v7.2.6
+# baseline config, same as every prior point-release bump that landed ahead
+# of a mainline PPA build.
+#
+# Every vendor source re-checked against a REAL freshly exported v7.2.7 tree,
+# not just reachability:
+#   - XanMod `linux` clone: `git fetch origin && git checkout 7.2` (was
+#     stuck on branch `7.1`) then fast-forward — branch head moved to
+#     `42e7bb864359` (tag `7.2.7-xanmod1`, a full rebase-merge of v7.2.7).
+#     All 13 existing git-commit pins (0003-0011, 0018, 0025-0027) confirmed
+#     still present via `git cat-file -e <sha>` after the fast-forward — a
+#     fast-forward merge by construction cannot drop a commit, so this is a
+#     genuine proof, not the reachability-only check that burned 0002 at the
+#     7.2.5 bump. No re-pin needed for any of the 13.
+#   - `patches/custom/0001-cachyos-bore-7.2.patch` diffed BYTE-FOR-BYTE
+#     against a fresh `kernel-patches/7.2/sched/0001-bore.patch` (CachyOS
+#     `master` fast-forwarded `d5db2a95..57806e59`) — empty diff, no change,
+#     no re-pin needed.
+#   - `linux-tkg` `master` fast-forwarded 163 commits (mostly 7.3-targeted
+#     patchwork additions) — nothing new applicable to 7.2; the 7.2-specific
+#     content this repo already draws from (the hand-extracted PME timeout
+#     hunk in `../custom/0014-tkg-pci-pme-timeout.patch`) is unaffected.
+#   - **New this bump: zen-kernel swept for the first time**
+#     (`github.com/zen-kernel/zen-kernel`, shallow clones, not adopted as a
+#     standing local repo since nothing was taken).
+#     `7.2/main` (30 most recent commits reviewed): entirely upstream
+#     stable/mainline backports outside this box's hardware — mptcp fixes,
+#     s390 PAI, EDAC/altera, scsi qla2xxx (fibre channel), drm/amd HDMI/
+#     BT.2020, platform/x86 hp-wmi, i2c-designware. Nothing applicable to an
+#     i9-14900KF / RTX 5070 desktop with no fibre-channel HBA, no AMD GPU, no
+#     HP WMI hardware.
+#     `7.2/zen-sauce` (the actual "ZEN: INTERACTIVE" tuning series, 10
+#     commits reviewed) — checked each against real facts about this box,
+#     not dismissed on category alone:
+#       - "Use BFQ/Kyber as the elevator" — this box's NVMe is blk-mq, and
+#         0008-0011 already carry specific, validated mq-deadline tuning
+#         (wbt latency, rq_affinity, front-merge, write-prio). Switching the
+#         default elevator to Kyber would replace that tuning wholesale with
+#         an unmeasured different algorithm. Real conflict, not taken.
+#       - "Tune EEVDF for interactivity" — same fate as the already-dropped
+#         `0007-xanmod-zen-sched-latency`: this box runs BORE
+#         (CONFIG_SCHED_BORE), which rewrites fair.c's latency mechanism.
+#         Any EEVDF-interactivity patch collides with BORE by construction.
+#       - "Tune ondemand governor for interactivity" — this box runs
+#         `intel_pstate=active` (HWP-driven, confirmed live via
+#         `hyphaed verify`: governor=powersave, EPP=performance). The
+#         generic `ondemand` cpufreq governor this patch tunes is not in
+#         this box's active code path at all — same dead-governor shape as
+#         `cpufrequtils`'s SysV scripts, purged this same session (see
+#         `docs/boot-audit-7.2.6-2026-09-22.md`).
+#       - "Disable split lock mitigation by default" — this box's cmdline
+#         already makes a deliberate choice here (`split_lock_detect=warn`,
+#         not off), and this repo's hard constraint keeps CPU mitigations
+#         on. Disabling the compiled-in default conflicts with that stance
+#         and has no A/B evidence behind it either way.
+#       - "Disable swap-in readahead" / "Disable unevictable compaction" /
+#         "Enable background reclaim of hugepages" — genuinely could matter
+#         for this box's zram+zswap+THP=always setup, but zero A/B
+#         measurement exists for any of them. Per this repo's evidence gate
+#         ("no evidence of benefit, no patch, ever"), parked as advisory
+#         candidates for `diagnostics/bench-mm.sh`, not adopted blind.
+#     Verdict: nothing taken from either zen-kernel branch this bump.
+#   - **Liquorix**: `liquorix-package`'s branches are version-numbered by
+#     kernel series going back to 4.10 with no 7.x entries visible in a
+#     heads listing — liquorix's actual patch content (BFQ tuning, the same
+#     ZEN lineage, MuQSS) is what the zen-kernel sweep above already
+#     evaluated. Recorded as checked, nothing liquorix-specific to add,
+#     rather than silently skipped.
+#   - Intel `linux-kernel-overlay` refreshed to a newer snapshot
+#     (`mainline-preprod-v7.2-linux-260916T081344Z`, up from the 7.2.5
+#     bump's 260909 snapshot) — 106 patch files now (down from 138), same
+#     bulk-reject categories apply (Xe/i915 DRM on a card with no iGPU,
+#     future-ISA perf-subsystem staging, Nova-Lake-specific pmc_core, PCI
+#     VMD storage this box's NVMe doesn't use). The one queued exception,
+#     the RAPL PMU counter-wraparound fix (`a8b842366f8f`), is STILL not an
+#     ancestor of v7.2.7 or of kernel-org `origin/master`
+#     (`git merge-base --is-ancestor` both fail) — stays queued, unchanged.
+#
+# **Real gate — the full 25-patch series (0001-0029, including the newly
+# added 0029) applied via a real sequential `git am --3way` against a
+# freshly exported, genuinely clean v7.2.7 tree: CLEAN, zero conflicts,
+# zero re-pins needed.** This is the first bump in this repo's history
+# where the vendor sweep produced no drift at all. Compile-checked the
+# historically fragile objects against that same fresh tree afterward
+# (`mm/page_cache_ext.o`, `mm/page_cache_ext_ds.o`, `mm/memcontrol.o`,
+# `mm/vmscan.o`, `kernel/bpf/verifier.o`, `arch/x86/pci/acpi.o`) — same
+# expected `-Wmissing-prototypes` warnings 0023 has always produced (hand-
+# ported from a v6.6.8 fork, documented in this file's own history), zero
+# errors, all six objects built.
+#
+# Lock re-pin, same day: `hyphaed fetch-patches` (and the wizard's "Fetch
+# patches only") had been silently checking the wrong lock file entirely
+# (patches/VENDOR.lock, the dead ubuntu-mode default — see
+# hyphaed/phases/patch.py::resolve_vendor_lock() and cli.py's
+# _cmd_fetch_patches, fixed this same session) — so real drift in THIS
+# lock, VENDOR-kernel-org-7.2.lock, had never actually been exercised.
+# Fixing the wrong-lock bug surfaced it: the 0013/0014 entries
+# (../custom/0015-nvme-…/0016-mm-thp-…) carried stale sha256 pins from
+# before the 2026-08-20 "author patches as me.com" rewrite — that commit's
+# own message says it re-pinned patches/VENDOR.lock, but
+# VENDOR-kernel-org-7.2.lock was created later from an older copy and never
+# picked up the correction. Re-pinned to match the current file content
+# (verified identical to what patches/VENDOR.lock already had right).
+# `hyphaed fetch-patches` now verifies clean, 25/25.
 
 ../custom/0001-cachyos-bore-7.2.patch
 ../custom/0002-xanmod-vmscan-swappiness-7.2.5.patch
@@ -420,3 +535,32 @@
 # systemd drop-in as an immediate, no-rebuild stopgap for kernels already
 # built without this hunk; this patch is the actual fix for the next build.
 ../custom/0028-apparmor-userns-sfs-advertise.patch
+
+# 0029 — task T20 (docs/tasks_patches.md), promoted 2026-09-22. OURS.
+# pci_acpi_root_get_node() leaves every PCI root bus at NUMA_NO_NODE on
+# this board (ASRock B760M-ITX/D4: no ACPI _PXM, Northbridge fallback also
+# empty, one online NUMA node) — reproduced live on 7.2.6-hyphaed: 4
+# nvidia-fs "error retrieving numa node" warnings + 19-20 KERN_ALERT
+# "[Firmware Bug]: Overriding NUMA node to 0" lines per boot, the latter
+# self-inflicted by this repo's own 62-hyphaed-pci-numa-node.rules udev
+# rule (numa_node_store() taints TAINT_FIRMWARE_WORKAROUND on every write —
+# bit 11, 2048, the one bit of this box's taint value that isn't upstream's
+# doing). On a system with exactly one online node, NUMA_NO_NODE is not
+# actually ambiguous. x86-only, 12 lines, node_online() two lines above
+# already guards a stale offline node.
+#
+# Compiled clean (arch/x86/pci/acpi.o, 0 warnings) against a real v7.2.6
+# tree + this box's production .config, in an isolated git worktree.
+# checkpatch --strict: 0 errors, 0 warnings. Applies clean via `git apply
+# --check` against 7.2.6; not yet re-verified against a real v7.2.7 tree
+# (do that before this ships in the 7.2.7 build — see the 7.2.7 bump note
+# above for why no local v7.2.7 baseline exists yet).
+#
+# NOT YET BOOTED. The falsifiable acceptance gate (4 nvidia-fs warnings ->
+# 0, /sys/bus/pci/devices/0000:01:00.0/numa_node == 0 with the udev rule
+# removed, tainted value drops by 2048) needs an install + reboot into a
+# kernel carrying this patch, which has not happened. Once verified,
+# /etc/udev/rules.d/62-hyphaed-pci-numa-node.rules and
+# hyphaed/phases/postinstall.py's _ensure_pci_numa_rule become removable —
+# see upstream-candidates/x86-pci-single-node-root-bus/README.md.
+../custom/0029-x86-pci-single-node-root-bus-node.patch

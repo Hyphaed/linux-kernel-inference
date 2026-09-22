@@ -1,0 +1,81 @@
+From 835c2c51e247f51e0e1c1e7a81cfb30150483b15 Mon Sep 17 00:00:00 2001
+From: Ferran Duarri <ferran.duarri@me.com>
+Date: Tue, 22 Sep 2026 08:00:04 +0200
+Subject: [PATCH] x86/pci: default a root bus to the only online node when
+ firmware won't say
+
+pci_acpi_root_get_node() leaves a PCI root bus at NUMA_NO_NODE when both
+_PXM (ACPI) and the Northbridge hardware fallback come up empty. Some
+consumer boards genuinely provide neither -- confirmed live on an ASRock
+B760M-ITX/D4 (i9-14900KF, one online NUMA node,
+/sys/bus/pci/devices/0000:0{1,2,4}:00.0/numa_node all read -1 before any
+workaround). Every NUMA-aware caller of pcibus_to_node() then reads
+"unknown" on hardware that has exactly one truthful answer.
+
+The concrete symptom this box hits at every boot: nvidia-fs's
+nvfs_get_numa_node_from_pdevinfo() calls pcibus_to_node() directly (not
+the per-device numa_node sysfs attribute), gets NUMA_NO_NODE, and logs
+"error retrieving numa node for device ..." four times per boot -- once
+for the GPU, once for each NVMe controller. A udev rule that patches the
+per-device sysfs attribute after the fact cannot fix this, because
+pcibus_to_node() reads a value set once at bus enumeration and never
+exposed as a writable sysfs node; that rule's own comment documents this
+as its known limitation.
+
+On a system with exactly one online node, NUMA_NO_NODE is not actually
+ambiguous: there is exactly one truthful non-NUMA_NO_NODE answer, and the
+kernel already has the fact needed to give it. Use first_online_node
+rather than a hardcoded 0 so this stays correct even on a single-node
+system whose one online node isn't numbered 0. x86-only by construction
+(arch/x86/pci/acpi.c), so it cannot change behavior on any multi-node or
+non-x86 system -- the existing node_online() check two lines above already
+guards against a stale offline node being returned.
+
+As a side effect this also stops a self-inflicted taint: the udev rule
+this box carried to paper over the symptom writes the per-device
+numa_node sysfs attribute, and numa_node_store() (drivers/pci/pci-sysfs.c)
+calls add_taint(TAINT_FIRMWARE_WORKAROUND) and logs a KERN_ALERT
+"[Firmware Bug]: Overriding NUMA node to N" on every such write -- 19-20
+lines per boot on this box, all caused by our own workaround rather than
+anything upstream. Fixing the root cause at the bus level makes that
+per-device udev rule unnecessary.
+
+Verified: compiles clean (arch/x86/pci/acpi.o, 0 warnings) against a real
+v7.2.6 tree with this box's production .config, in an isolated git
+worktree so the concurrent build was untouched. checkpatch.pl --strict
+clean. Not yet verified: the four live-boot conditions this needs before
+it is more than a plausible fix (nvidia-fs warning count -> 0, the sysfs
+numa_node attribute reading 0 with the udev rule removed, the tainted
+value dropping by 2048, and pcibus_to_node() itself observed returning 0
+at the nvidia-fs call site) -- all four need a reboot into a kernel
+carrying this patch, which has not happened yet.
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
+---
+ arch/x86/pci/acpi.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/x86/pci/acpi.c b/arch/x86/pci/acpi.c
+index 7cd5388ed..2ae31c3e7 100644
+--- a/arch/x86/pci/acpi.c
++++ b/arch/x86/pci/acpi.c
+@@ -463,6 +463,18 @@ static int pci_acpi_root_get_node(struct acpi_pci_root *root)
+ 	if (node != NUMA_NO_NODE && !node_online(node))
+ 		node = NUMA_NO_NODE;
+ 
++	/*
++	 * Firmware on some consumer boards omits _PXM entirely and the
++	 * hardware fallback above also comes up empty, leaving every PCI
++	 * root bus at NUMA_NO_NODE. On a system with exactly one online
++	 * node that isn't ambiguous: there is only one truthful answer.
++	 * Leaving it at NUMA_NO_NODE instead means every NUMA-aware caller
++	 * (pcibus_to_node(), which nvidia-fs's numa lookup depends on) reads
++	 * "unknown" on hardware that has a perfectly well-defined answer.
++	 */
++	if (node == NUMA_NO_NODE && num_online_nodes() == 1)
++		node = first_online_node;
++
+ 	return node;
+ }
+ 

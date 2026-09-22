@@ -49,8 +49,8 @@
 0010-xanmod-mq-deadline-front-merge.patch                      git+file://$KI_ROOT/linux@fd699380cd6a                                              2b81c7b62e2c225060515c5f5f7f71de2a88f6248be093648b92a4def1b9c429  git-commit
 0011-xanmod-mq-deadline-write-prio.patch                       git+file://$KI_ROOT/linux@3868ed8dbd88                                              53cdba9c08367293e8bdf25ea86c009af92159fc79cb4e931a533fcfa378f2a2  git-commit
 0012-tkg-pci-pme-timeout.patch                                 file://$KI_ROOT/patches/custom/0014-tkg-pci-pme-timeout.patch                       96b7670e0d5bcf01ff2333a743e86f340638390d6ad8966368e64ec323b08beb  local-file
-0013-nvme-lower-default-apst-latency.patch                     file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch           50c1f5777237cdc0de68eeeb2d39b7af9b38340461bf8cfeb8e90c915254dd99  local-file
-0014-mm-thp-defrag-defer-madvise-default.patch                 file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch       526a9e594d94a24ffabf237219eb2f3c94c82654153c6c4edf7c82e035215a17  local-file
+0013-nvme-lower-default-apst-latency.patch                     file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch           23b1420a902d48f877fffdef6f0a98349f7847278b3bea25a1a40a63ce3434c3  local-file
+0014-mm-thp-defrag-defer-madvise-default.patch                 file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch       328bf8de4d418904ae3a98834c792ab3fb15ebfa39b1e734807ce03dac3823e2  local-file
 0015-kbuild-ubsan-extmod-opt-in.patch                          file://$KI_ROOT/patches/kernel-org-7.2/0015-kbuild-ubsan-extmod-opt-in.patch        3ba3cd7d30dd44abf8807c96de5273c4a632b65d9591c9e87feb602d4b0a07fa  local-file
 0018-xanmod-pci-acs-override.patch                             git+file://$KI_ROOT/linux@84598b0cf5c4                                              f92f931ded3103ad94b9f2a4a5f2a6cc7f4ce6f901c3fd89f2081db6b407267a  git-commit
 ../custom/0019-dma-buf-priority-hint.patch                  file://$KI_ROOT/patches/custom/0019-dma-buf-priority-hint.patch                     74b4d3fe2ac0ee927e1690c99d72fe8039d425c9fb95771361c8d5e34d359d84  local-file
@@ -89,3 +89,7 @@
 # dormant on this box (no BPF struct_ops program loaded), so this did not fix
 # a live incident — it fixes the one confirmed defect in the vendored patch.
 ../custom/0028-apparmor-userns-sfs-advertise.patch          file://$KI_ROOT/patches/custom/0028-apparmor-userns-sfs-advertise.patch          d2a0a34d36edf5071bd29a224b1ecdec029c4285bb4f0d9964044b3065f3af05  local-file
+
+# 0029 — x86/pci single-node root bus NUMA fix. Ours (T20, promoted
+# 2026-09-22). See patches/kernel-org-7.2/series for the full record.
+../custom/0029-x86-pci-single-node-root-bus-node.patch      file://$KI_ROOT/patches/custom/0029-x86-pci-single-node-root-bus-node.patch      1b7d51ea9103d3a75806e59eb8add423786d7ec4546aa30673c8e39839ef5f83  local-file
