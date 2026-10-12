@@ -92,4 +92,8 @@
 
 # 0029 — x86/pci single-node root bus NUMA fix. Ours (T20, promoted
 # 2026-09-22). See patches/kernel-org-7.2/series for the full record.
-../custom/0029-x86-pci-single-node-root-bus-node.patch      file://$KI_ROOT/patches/custom/0029-x86-pci-single-node-root-bus-node.patch      1b7d51ea9103d3a75806e59eb8add423786d7ec4546aa30673c8e39839ef5f83  local-file
+../custom/0029-x86-pci-single-node-root-bus-node.patch      file://$KI_ROOT/patches/custom/0029-x86-pci-single-node-root-bus-node.patch      51a03039d9b18a6213551c15626431fc7eeda3e7f1bbe9fdfeac728490ac8115  local-file
+
+# 0030 — T21: skip the 2.5GT/s restriction lift on a root port with no link.
+# Ours, promoted 2026-10-04 for 7.2.9. See patches/kernel-org-7.2/series.
+../custom/0030-pci-skip-futile-retrain-on-empty-port.patch  file://$KI_ROOT/patches/custom/0030-pci-skip-futile-retrain-on-empty-port.patch  a6e192299244dc44137679ce5882ed75c6801bc4d15dc1432356f0ad59ef63f2  local-file

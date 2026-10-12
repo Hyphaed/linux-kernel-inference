@@ -1,0 +1,56 @@
+X-Unsent: 1
+From: Ferran Duarri <ferran.duarri@me.com>
+To: Bjorn Helgaas <bhelgaas@google.com>, Thomas Gleixner <tglx@kernel.org>, x86@kernel.org, linux-pci@vger.kernel.org
+Cc: Ingo Molnar <mingo@redhat.com>, Borislav Petkov <bp@alien8.de>, Dave Hansen <dave.hansen@linux.intel.com>, "H. Peter Anvin" <hpa@zytor.com>, "Rafael J. Wysocki" <rafael@kernel.org>, Len Brown <lenb@kernel.org>, linux-acpi@vger.kernel.org, linux-kernel@vger.kernel.org
+Subject: [RFC PATCH] x86/PCI: Use the only online node for root buses with no _PXM
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+When a host bridge has no _PXM and the Northbridge fallback finds
+nothing either, pci_acpi_root_get_node() leaves every root bus at
+NUMA_NO_NODE. With exactly one node online that isn't really unknown,
+there's only one possible answer.
+
+Seen on an ASRock B760M-ITX/D4 (i9-14900KF). nvidia-fs calls
+pcibus_to_node() directly and warns "error retrieving numa node" four
+times per boot, once for the GPU and once per NVMe. Rewriting the
+per-device numa_node attribute from udev doesn't help, since
+pcibus_to_node() reads the bus value set at enumeration.
+
+Fall back to first_online_node when num_online_nodes() == 1. Systems
+with more than one node are unaffected.
+
+With this applied the warnings are gone over four boots. I didn't
+observe pcibus_to_node() itself at the call site, there's no sysfs
+file for it.
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
+---
+Only user I've got is the out-of-tree nvidia-fs, hence the RFC. The
+single-node condition is the same reasoning as Bjorn's 2019 "PCI: Warn
+about host bridge device when its numa node is NO_NODE" change. Fine to
+drop this if callers are expected to cope with NUMA_NO_NODE.
+
+ arch/x86/pci/acpi.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/arch/x86/pci/acpi.c b/arch/x86/pci/acpi.c
+index 7cd5388ed..2ae31c3e7 100644
+--- a/arch/x86/pci/acpi.c
++++ b/arch/x86/pci/acpi.c
+@@ -463,6 +463,13 @@ static int pci_acpi_root_get_node(struct acpi_pci_root *root)
+ 	if (node != NUMA_NO_NODE && !node_online(node))
+ 		node = NUMA_NO_NODE;
+ 
++	/*
++	 * One online node means there's only one possible answer, so don't
++	 * leave the bus at NUMA_NO_NODE just because firmware didn't say.
++	 */
++	if (node == NUMA_NO_NODE && num_online_nodes() == 1)
++		node = first_online_node;
++
+ 	return node;
+ }
+ 

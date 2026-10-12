@@ -628,11 +628,12 @@ def run_phase(ctx) -> list[Path]:
     src = ctx.source_dir
     profile = ctx.profile
 
-    pkgver = kdeb_pkgversion(profile)
+    source_mode = getattr(ctx, "source_mode", "ubuntu")
+    pkgver = kdeb_pkgversion(profile, source_mode=source_mode)
     ctx.kernel_pkgver = pkgver
     log.info(f"package version: {pkgver}")
     log.info(f"flavour suffix:  -{profile.flavour}")
-    log.info(f"final uname -r:  {hyphaed_uname_r(profile.running_kernel, profile.flavour, getattr(ctx, 'source_mode', 'ubuntu'))}")
+    log.info(f"final uname -r:  {hyphaed_uname_r(profile.running_kernel, profile.flavour, source_mode)}")
 
     jobs = max(1, (os.cpu_count() or 1))
     source_date_epoch = _source_date_epoch(src)

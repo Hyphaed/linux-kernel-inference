@@ -10,6 +10,7 @@
 | `0019` dma-buf priority hint (RFC) | 2026-08-20 21:08 CEST | dri-devel, linux-media, linaro-mm-sig, linux-kernel | `20260820190838.221435-1-ferran.duarri@me.com` | <https://lore.kernel.org/dri-devel/20260820190838.221435-1-ferran.duarri@me.com/> |
 | `0015` nvme APST default | **2026-08-20 21:44 CEST — sent 4x, see correction below** | linux-nvme, linux-kernel | `20260820194417.269110-1-ferran.duarri@me.com` (+3 dupes/resends) | <https://lore.kernel.org/linux-nvme/20260820194417.269110-1-ferran.duarri@me.com/> |
 | `0021` v3 PCI/sysfs docs | 2026-08-21 10:33 CEST | linux-pci, linux-api, linux-kernel | `20260821083353.444300-1-ferran.duarri@me.com` | <https://lore.kernel.org/linux-pci/20260821083353.444300-1-ferran.duarri@me.com/> |
+| `0029` x86/PCI single-node root bus (RFC) | 2026-09-30 09:15 CEST, Thunderbird (iCloud SMTP auth failed for git send-email) | linux-pci, x86, linux-acpi, linux-kernel | `33c0b32e-11eb-4e3e-bb59-e349289c498b@me.com` | <https://lore.kernel.org/linux-pci/33c0b32e-11eb-4e3e-bb59-e349289c498b@me.com/> (not yet confirmed on lore) |
 
 All sent with `git send-email` via `smtp.mail.me.com`, SMTP result 250, To: the
 subsystem maintainers with the lists in Cc:. `0020` is deliberately held, and

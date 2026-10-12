@@ -398,3 +398,50 @@ the tree has the cacheline fix and still builds a per-4K scatterlist.
 
 A note to `stable@vger.kernel.org` pointing that out is a normal request and
 needs no authorship claim. It is not written yet.
+
+## `0029` — x86/pci single-node NUMA fix, live-boot verified, staged not sent
+
+2026-09-28: this is the first patch in the series drafted with real evidence
+in hand *before* the commit message was finalized, not after — see
+`docs/tasks_patches.md` T20 for the full verification writeup. Copied here
+from `patches/custom/0029-x86-pci-single-node-root-bus-node.patch` with its
+"Not yet verified" paragraph rewritten to state what was actually measured
+across 4 real 7.2.7-hyphaed boots (nvidia-fs warnings 4/boot → 0, the
+`[Firmware Bug]` NUMA-override line 19-20/boot → 0, taint down exactly 2048)
+and what wasn't (`pcibus_to_node()`'s return value itself — no sysfs
+attribute exposes it, inferred from the three measurements above, stated as
+inferred, not claimed as directly read).
+
+`checkpatch.pl --strict` clean (run against the diff, from a real v7.2.6
+tree). Recipients below come from `scripts/get_maintainer.pl --no-git
+--no-git-fallback -f arch/x86/pci/acpi.c` run against a real v7.2.8 checkout
+— the full tool output, not hand-trimmed, per this file's own rule 7 lesson
+about not guessing addresses:
+
+    cd ~/Dev/kernel_inference/upstream-candidates/outbox
+    git send-email --dry-run \
+      --to="Bjorn Helgaas <bhelgaas@google.com>" \
+      --to="Rafael J. Wysocki <rafael@kernel.org>" \
+      --to="Len Brown <lenb@kernel.org>" \
+      --cc="Thomas Gleixner <tglx@kernel.org>" \
+      --cc="Ingo Molnar <mingo@redhat.com>" \
+      --cc="Borislav Petkov <bp@alien8.de>" \
+      --cc="Dave Hansen <dave.hansen@linux.intel.com>" \
+      --cc="H. Peter Anvin <hpa@zytor.com>" \
+      --cc=x86@kernel.org \
+      --cc=linux-pci@vger.kernel.org \
+      --cc=linux-acpi@vger.kernel.org \
+      --cc=linux-kernel@vger.kernel.org \
+      0029-x86-pci-single-node-root-bus-node.patch
+
+Bjorn Helgaas (PCI) is `--to` rather than Cc since the observable symptom is
+entirely PCI-side (`pcibus_to_node()`); ACPI is where the function that
+changes lives, hence Rafael/Len also `--to`. The x86 arch maintainers are
+included because `get_maintainer.pl` matched them (the file lives under
+`arch/x86/pci/`), left in rather than pruned on our own judgment.
+
+**Not sent.** Drop `--dry-run` only when Ferran says to, per the standing
+process rule in `CLAUDE.md` §"sending anything upstream" — evidence gate is
+now genuinely cleared (this is the one patch in the queue that is), but a
+first-time send to a new set of maintainers on a live list still needs a
+human decision on timing, not just a passed checklist.

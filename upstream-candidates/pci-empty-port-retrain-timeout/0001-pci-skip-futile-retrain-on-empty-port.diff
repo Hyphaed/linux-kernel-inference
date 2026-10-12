@@ -1,0 +1,37 @@
+diff --git a/drivers/pci/quirks.c b/drivers/pci/quirks.c
+index b73661dee..8bffe5d71 100644
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -117,6 +117,32 @@ int pcie_failed_link_retrain(struct pci_dev *dev)
+ 
+ 	pcie_capability_read_word(dev, PCI_EXP_LNKCTL2, &lnkctl2);
+ 	if ((lnkctl2 & PCI_EXP_LNKCTL2_TLS) == PCI_EXP_LNKCTL2_TLS_2_5GT) {
++		/*
++		 * This quirk is documented above as applying "where a
++		 * 2.5GT/s speed restriction has been previously arranged
++		 * by the firmware and the port reports its link already
++		 * being up" -- but nothing before this point actually
++		 * checks that. dev->subordinate is still NULL here: this
++		 * runs from pci_device_add() before pci_scan_bridge() has
++		 * created the downstream bus, so an empty slot can't be
++		 * told apart from a populated one by walking bus->devices.
++		 * DLLLA can: link training is autonomous in hardware and
++		 * settles well before software reaches this fixup, so a
++		 * port with nothing behind it reads DLLLA=0 here and stays
++		 * that way. Skip the retrain in that case -- it can only
++		 * time out waiting for a DLLLA that will never assert
++		 * (PCIE_LINK_RETRAIN_TIMEOUT_MS, pcie_retrain_link()),
++		 * which costs up to a second of boot time and logs a
++		 * "retraining failed" line for a port nothing is wrong
++		 * with. Scoped to !dev->subordinate so the two other
++		 * callers of this function (both post-reset link-recovery
++		 * paths, both calling it on a port whose subordinate bus
++		 * already exists) are unaffected.
++		 */
++		pcie_capability_read_word(dev, PCI_EXP_LNKSTA, &lnksta);
++		if (!dev->subordinate && !(lnksta & PCI_EXP_LNKSTA_DLLLA))
++			return -ENOTTY;
++
+ 		pci_info(dev, "removing 2.5GT/s downstream link speed restriction\n");
+ 		ret = pcie_set_target_speed(dev, speed_cap, false);
+ 		if (ret)

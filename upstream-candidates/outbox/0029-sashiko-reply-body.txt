@@ -1,0 +1,26 @@
+On Wed, Sep 30, 2026 at 07:23:58AM +0000, sashiko-bot@kernel.org wrote:
+> Would checking num_possible_nodes() == 1 or nr_node_ids == 1 be safer here
+> to avoid corrupting topology on hotplug systems?
+
+Good catch, and it's worse than hotplug. The node_online() check just
+above turns a _PXM naming an offline node into NUMA_NO_NODE, and this
+hunk then gives that bus node 0. nr_node_ids == 1 has no such case:
+there's no other node the bus could belong to. I'll switch to that in
+v2 after I've rebuilt and booted it.
+
+> Should hardware topology be faked in the core kernel to work around an
+> out-of-tree driver?
+
+I don't think it's faked. On a machine where possible and online are
+both "0", node 0 is the only correct answer, and firmware not saying so
+doesn't make it unknown. NUMA_NO_NODE is for "can't tell", and here we
+can. The nvidia-fs warning is just how I noticed it, the bus value is
+wrong for any caller of pcibus_to_node(), in-tree or not.
+
+The only user I have is out-of-tree (nvidia-fs), which is why this is
+an RFC. Bjorn, x86 folks: would you take it with the nr_node_ids
+check? If yes, I'll send v2. If you think callers should deal with -1
+themselves, say so and I'll drop it.
+
+Thanks,
+Ferran

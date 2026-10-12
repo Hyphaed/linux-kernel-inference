@@ -8,7 +8,7 @@ PY ?= python3
 # how `make install` came to silently do nothing (2026-08-26). A rule missing
 # from here breaks the day a file of that name appears in the tree.
 # tests/test_makefile_targets.py checks both directions.
-.PHONY: help detect deps fetch-patches fetch-patches-discover build build-package \
+.PHONY: sources-check bump post-boot-audit prune-build help detect deps fetch-patches fetch-patches-discover build build-package \
         build-dry install rebase clean list-presets status verify prune uninstall \
         print-config install-deps test compare snapshot doctor update-cmdline \
         scx-install scx-status scx-run scx-stop scx-enable scx-disable
@@ -160,3 +160,21 @@ test:
 
 clean:
 	rm -rf build/* out/debs/* out/logs/* out/manifest.json out/System.map-* state/*.json
+
+# Re-runnable kernel bump: preflight, sync every patch source, sweep, validate the
+# series on the new tag, build+package, audit fragments. Stops before install.
+#   make bump VER=7.2.9            full run     SWEEP_ONLY=1 for sources+sweep only
+#   make post-boot-audit VER=7.2.9 after rebooting into it
+bump:
+	@VER=$(VER) bash scripts/bump/run-all.sh
+
+post-boot-audit:
+	@VER=$(VER) bash scripts/bump/60-post-boot-audit.sh
+
+# Old build/linux-* trees are the bulk of build/ (152 GB at last count). Keeps NEWEST (default 2).
+prune-build:
+	@ls -d build/linux-7.* 2>/dev/null | sort -V | head -n -$(or $(KEEP),2) | xargs -r rm -rf
+
+# Verify every URL in patches/sources.tsv answers git ls-remote and show what this machine would use.
+sources-check:
+	@VER=$(or $(VER),7.2.9) python3 scripts/bump/source-inventory.py

@@ -133,7 +133,7 @@ def test_the_release_list_includes_dot_zero_releases():
     if not (repo / "github/kernelorg/linux").is_dir():
         pytest.skip("no local kernelorg mirror")
     proc = subprocess.run(
-        [sys.executable, "-m", "hyphaed", "list-versions", "--count", "8", "--json"],
+        [sys.executable, "-m", "hyphaed", "list-versions", "--count", "40", "--json"],
         cwd=repo, capture_output=True, text=True, timeout=300)
     versions = [r["version"] for r in json.loads(proc.stdout)["releases"]]
     two_component = [v for v in versions if v.count(".") == 1]

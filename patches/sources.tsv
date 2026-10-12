@@ -1,0 +1,49 @@
+# Patch-source inventory. Every URL below answered `git ls-remote` on 2026-10-04 (NOT guessed).
+# Read by scripts/bump/source-inventory.py; re-verify with: make sources-check
+# Columns (TAB-separated): name  url  ref  kernel  type  needs-hw  mode  note
+#   ref      branch fetched for 7.2.x, or HEAD where the repo has no 7.2 branch
+#   needs-hw intel-cpu|intel-igpu|amd-cpu|amd-gpu|nvidia-gpu|arm-soc|thunderbolt|mellanox|any
+#            a source whose hardware is absent is verified but never fetched or ranked
+#   mode     clone = blobless shallow clone into github/sources/<name>; ls = verify + record tip only
+# Already handled elsewhere (not duplicated): xanmod, cachyos-kernel-patches, linux-cachyos, linux-tkg, kernel-research,
+#   kernelorg mirror, intel-overlay, stable-queue, steamos (evlaV) -- see scripts/bump/10-sync-sources.sh
+zen-kernel	https://github.com/zen-kernel/zen-kernel	7.2/main	7.2	downstream-tree	any	clone	Zen patches (bbr3, dmem-ttm branches also exist)
+liquorix	https://github.com/damentz/liquorix-package	7.2/master	7.2	patch-set	any	clone	Liquorix config + zen-derived patches
+gentoo-linux-patches	https://anongit.gentoo.org/git/proj/linux-patches.git	7.2	7.2	distro-patches	any	clone	Gentoo genpatches for 7.2
+sirlucjan	https://github.com/sirlucjan/kernel-patches	HEAD	multi	patch-set	any	clone	per-version directories; look for 7.2
+graysky-compiler	https://github.com/graysky2/kernel_compiler_patch	HEAD	multi	patch-set	intel-cpu	clone	-march patches; rejected last bump vs X86_NATIVE_CPU=y
+frogging-community	https://github.com/Frogging-Family/community-patches	HEAD	multi	patch-set	any	clone	tkg community patches
+bore-scheduler	https://github.com/firelzrd/bore-scheduler	HEAD	multi	scheduler	any	clone	BORE upstream author; check patches/linux/stable
+xanmod-patches	https://github.com/xanmod/linux-patches	HEAD	multi	patch-set	any	clone	XanMod patch series (companion to the tree already local)
+clear-linux	https://github.com/clearlinux-pkgs/linux	HEAD	multi	distro-patches	intel-cpu	clone	Clear Linux packaging + patches
+steamos-valve-legacy	https://github.com/ValveSoftware/steamos_kernel	HEAD	4.11	downstream-tree	any	ls	STALE: only brewmaster-4.11; current Valve work is evlaV/linux-integration (synced)
+nvidia-open-gpu	https://github.com/NVIDIA/open-gpu-kernel-modules	HEAD	driver	vendor-driver	nvidia-gpu	ls	driver source; DKMS-managed here (apt 615.x); check for 7.2 compat commits
+nouveau	https://gitlab.freedesktop.org/drm/nouveau	HEAD	-next	subsystem-tree	nvidia-gpu	ls	box runs the proprietary-open driver, nouveau blacklisted
+drm-misc	https://gitlab.freedesktop.org/drm/misc/kernel	HEAD	-next	subsystem-tree	nvidia-gpu	ls	DRM core / GSP / KMS
+drm-i915	https://gitlab.freedesktop.org/drm/i915/kernel	HEAD	-next	subsystem-tree	intel-igpu	ls	14900KF has no iGPU: skipped on ncore
+drm-xe	https://gitlab.freedesktop.org/drm/xe/kernel	HEAD	-next	subsystem-tree	intel-igpu	ls	no iGPU: skipped on ncore
+amdgpu-staging	https://gitlab.freedesktop.org/agd5f/linux	HEAD	-next	subsystem-tree	amd-gpu	ls	AMDGPU; laptop iGPU only
+sched-ext-kernel	https://github.com/sched-ext/sched_ext	HEAD	-next	scheduler	any	ls	sched_ext kernel branch
+scx-schedulers	https://github.com/sched-ext/scx	HEAD	userspace	scheduler	any	ls	userspace schedulers (scx already managed via `hyphaed scx`)
+preempt-rt	https://git.kernel.org/pub/scm/linux/kernel/git/rt/linux-stable-rt.git	HEAD	stable-rt	rt-tree	any	ls	PREEMPT_RT; PREEMPT_RT_FULL not used on desktop gaming preset
+tip	https://git.kernel.org/pub/scm/linux/kernel/git/tip/tip.git	HEAD	-next	subsystem-tree	any	ls	sched, x86, perf, irq
+mm-akpm	https://git.kernel.org/pub/scm/linux/kernel/git/akpm/mm.git	HEAD	-next	subsystem-tree	any	ls	mm, zram, zswap, THP, DAMON
+block	https://git.kernel.org/pub/scm/linux/kernel/git/axboe/linux.git	HEAD	-next	subsystem-tree	any	ls	block, io_uring, NVMe core (verified path; linux-block.git does not exist)
+net-next	https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git	HEAD	-next	subsystem-tree	any	ls	networking (r8169, iwlwifi consumers)
+pci	https://git.kernel.org/pub/scm/linux/kernel/git/pci/pci.git	HEAD	-next	subsystem-tree	any	ls	carries 0012/0029/0030-class work
+iommu	https://git.kernel.org/pub/scm/linux/kernel/git/iommu/linux.git	HEAD	-next	subsystem-tree	any	ls	Intel VT-d + VFIO paths
+vfio	https://github.com/awilliam/linux-vfio	HEAD	-next	subsystem-tree	any	ls	VFIO (VMware box, ACS override 0018)
+kvm	https://git.kernel.org/pub/scm/virt/kvm/kvm.git	HEAD	-next	subsystem-tree	intel-cpu	ls	KVM (kvm_intel loaded); TDX/AMX live here
+pm-cpufreq	https://git.kernel.org/pub/scm/linux/kernel/git/rafael/linux-pm.git	HEAD	-next	subsystem-tree	intel-cpu	ls	intel_pstate/HWP/EPP, cpuidle, thermal
+thunderbolt	https://git.kernel.org/pub/scm/linux/kernel/git/westeri/thunderbolt.git	HEAD	-next	subsystem-tree	thunderbolt	ls	no Thunderbolt controller on ncore
+ext4	https://git.kernel.org/pub/scm/linux/kernel/git/tytso/ext4.git	HEAD	-next	subsystem-tree	any	ls	root fs on ext4 via LVM
+btrfs	https://git.kernel.org/pub/scm/linux/kernel/git/kdave/linux.git	HEAD	-next	subsystem-tree	any	ls	only if a btrfs volume is added
+mellanox	https://git.kernel.org/pub/scm/linux/kernel/git/mellanox/linux.git	HEAD	-next	subsystem-tree	mellanox	ls	no Mellanox NIC
+qualcomm	https://git.kernel.org/pub/scm/linux/kernel/git/qcom/linux.git	HEAD	-next	subsystem-tree	arm-soc	ls	ARM only
+mediatek	https://git.kernel.org/pub/scm/linux/kernel/git/mediatek/linux.git	HEAD	-next	subsystem-tree	arm-soc	ls	ARM only
+broadcom-stb	https://github.com/Broadcom/stblinux	HEAD	-next	subsystem-tree	arm-soc	ls	ARM only
+arch-linux	https://gitlab.archlinux.org/archlinux/packaging/packages/linux	main	multi	distro-patches	any	clone	Arch kernel PKGBUILD + patches
+debian-kernel	https://salsa.debian.org/kernel-team/linux	debian/7.2/forky	7.2	distro-patches	any	clone	Debian 7.2 branch
+fedora-kernel	https://src.fedoraproject.org/rpms/kernel	rawhide	multi	distro-patches	any	ls	Fedora rawhide spec + patches
+opensuse-kernel	https://github.com/openSUSE/kernel-source	HEAD	multi	distro-patches	any	ls	SUSE kernel-source (patches.suse/)
+ubuntu-resolute	https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/resolute	master	7.0	distro-patches	any	clone	Ubuntu 26.04 kernel git (debian.master/patches)

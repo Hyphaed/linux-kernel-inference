@@ -1,0 +1,77 @@
+From 0b1c5e2f7a9d4c3e8f6a1b2c3d4e5f60718293a4 Mon Sep 17 00:00:00 2001
+From: Ferran Duarri <ferran.duarri@me.com>
+Date: Sun, 4 Oct 2026 09:00:00 +0200
+Subject: [RFC PATCH] PCI: skip the 2.5GT/s restriction lift on a root port
+ with no link
+
+pcie_failed_link_retrain() documents itself as lifting a 2.5GT/s speed
+restriction "where [it] has been previously arranged by the firmware and
+the port reports its link already being up". Nothing in the function
+checks that second half. On a root port with nothing plugged in, where
+the firmware left TLS at 2.5GT/s, it goes straight to
+pcie_set_target_speed() and then waits PCIE_LINK_RETRAIN_TIMEOUT_MS
+(1000ms) for a DLLLA that can never assert, then logs "retraining
+failed" for a port that has nothing wrong with it.
+
+Seen on the Raptor Lake board this tree is built for: Root Port #8
+(00:1c.0) is genuinely empty (lspci -t shows nothing behind bus 03), and
+every boot carries the line
+
+  pci 0000:00:1c.0: retraining failed
+
+on all four 7.2.7 boots audited, none of them with any device missing.
+
+The check is cheap: re-read LNKSTA right before the branch and bail out
+when the link isn't up. It is scoped to !dev->subordinate on purpose.
+This function has three callers; only pci_device_add() runs before
+pci_scan_bridge() has created the downstream bus. The other two are
+post-reset link recovery paths, where the subordinate bus already exists,
+so this is a no-op for them by construction (read from both call sites,
+not exercised, there is no VFIO reset workload on this box).
+
+Compiles clean (drivers/pci/quirks.o) and the diff is checkpatch.pl
+--strict clean. No before/after boot timing exists yet: the evidence so
+far is the log line, not a measured stall. Hence RFC.
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
+---
+diff --git a/drivers/pci/quirks.c b/drivers/pci/quirks.c
+index b73661dee..8bffe5d71 100644
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -117,6 +117,32 @@ int pcie_failed_link_retrain(struct pci_dev *dev)
+ 
+ 	pcie_capability_read_word(dev, PCI_EXP_LNKCTL2, &lnkctl2);
+ 	if ((lnkctl2 & PCI_EXP_LNKCTL2_TLS) == PCI_EXP_LNKCTL2_TLS_2_5GT) {
++		/*
++		 * This quirk is documented above as applying "where a
++		 * 2.5GT/s speed restriction has been previously arranged
++		 * by the firmware and the port reports its link already
++		 * being up" -- but nothing before this point actually
++		 * checks that. dev->subordinate is still NULL here: this
++		 * runs from pci_device_add() before pci_scan_bridge() has
++		 * created the downstream bus, so an empty slot can't be
++		 * told apart from a populated one by walking bus->devices.
++		 * DLLLA can: link training is autonomous in hardware and
++		 * settles well before software reaches this fixup, so a
++		 * port with nothing behind it reads DLLLA=0 here and stays
++		 * that way. Skip the retrain in that case -- it can only
++		 * time out waiting for a DLLLA that will never assert
++		 * (PCIE_LINK_RETRAIN_TIMEOUT_MS, pcie_retrain_link()),
++		 * which costs up to a second of boot time and logs a
++		 * "retraining failed" line for a port nothing is wrong
++		 * with. Scoped to !dev->subordinate so the two other
++		 * callers of this function (both post-reset link-recovery
++		 * paths, both calling it on a port whose subordinate bus
++		 * already exists) are unaffected.
++		 */
++		pcie_capability_read_word(dev, PCI_EXP_LNKSTA, &lnksta);
++		if (!dev->subordinate && !(lnksta & PCI_EXP_LNKSTA_DLLLA))
++			return -ENOTTY;
++
+ 		pci_info(dev, "removing 2.5GT/s downstream link speed restriction\n");
+ 		ret = pcie_set_target_speed(dev, speed_cap, false);
+ 		if (ret)
+-- 
+2.43.0

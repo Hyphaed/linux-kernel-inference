@@ -564,3 +564,21 @@
 # hyphaed/phases/postinstall.py's _ensure_pci_numa_rule become removable —
 # see upstream-candidates/x86-pci-single-node-root-bus/README.md.
 ../custom/0029-x86-pci-single-node-root-bus-node.patch
+
+# 0029 v2 (2026-10-04): condition is now nr_node_ids == 1 instead of
+# num_online_nodes() == 1. sashiko's review of the RFC was right: the
+# node_online() check above turns a _PXM naming an OFFLINE node into
+# NUMA_NO_NODE, and the online-count test then rewrote that to node 0 too.
+# A single possible node can't have an offline sibling. Live-boot gate from
+# T20 was met on v1 (7.2.7: 0 nvidia-fs warnings, taint -2048); v2 needs the
+# same four checks again on 7.2.9 (scripts/bump/60-post-boot-audit.sh).
+
+# 0030 — task T21 (docs/tasks_patches.md), promoted 2026-10-04. OURS.
+# pcie_failed_link_retrain() lifts a firmware 2.5GT/s restriction without
+# checking the port's link is up, despite its own comment. Empty root port
+# 00:1c.0 burns PCIE_LINK_RETRAIN_TIMEOUT_MS (1000 ms) every boot on a DLLLA
+# that can't assert and logs "retraining failed". Fix: re-read LNKSTA and
+# skip when !dev->subordinate && !DLLLA. Compiles clean, checkpatch --strict
+# clean, subject [RFC PATCH]: no measured before/after yet. Gate for 7.2.9:
+# 0 "retraining failed" lines and a shorter 00:1c.0 gap in dmesg.
+../custom/0030-pci-skip-futile-retrain-on-empty-port.patch

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+import os
 import platform
 import re
 import shutil
@@ -54,24 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-y", "--yes", action="store_true", help="auto-accept non-hard prompts")
     p.add_argument("--preset", default="auto", help=f"preset name (default: auto — detected from hardware). Available: {','.join(presets.list_available()) or 'none'}")
     p.add_argument("--phase", choices=phases.ORDER + ["all"], default="all", help="run a single phase (default: all)")
-    # Default target/source-mode as of 2026-09-22: kernel.org 7.2.7 stable.
-    # Full source->patch->configure->build->package pipeline validated —
-    # the 25-patch series (patches/kernel-org-7.2/) applies via a real
-    # sequential `git am --3way` against a freshly exported v7.2.7 tree with
-    # ZERO conflicts and zero re-pins (see the "7.2.7 bump" note in that
-    # series file for the full vendor-sweep record). NOT yet installed or
-    # booted — the actually-running kernel on this box is 7.2.6-hyphaed;
-    # install/reboot stays a deliberate separate step, same as every prior
-    # bump. (Correcting drift found this session: this comment previously
-    # claimed 7.2.5 was "the kernel actually booted" when the box had
-    # already moved to 7.2.6 without the default or this note being
-    # updated — don't trust this line as proof of what's running; check
-    # `uname -r` or `hyphaed status`.)
-    # `hyphaed` with NO flags is meant to be the one good command — bump
-    # --target here when a newer kernel.org stable lands and has been
-    # validated the same way, rather than expecting every invocation to
-    # pass it explicitly.
-    p.add_argument("--target", default="7.2.7", help="target kernel.org stable version, e.g. 7.2.7. Bump this default after validating a newer kernel.org stable release, or run `hyphaed list-versions` to see the last 5 releases with dates.")
+    # Default target as of 2026-10-12: kernel.org 7.2.10 stable. A bare `hyphaed` is
+    # the two-run flow in hyphaed/round.py: run 1 captures the baseline, bumps, builds
+    # and installs; after the reboot run 2 audits, captures B and writes the A/B report.
+    # Bump this default only after `make bump VER=<x.y.z>` validated the series on it.
+    p.add_argument("--target", default="7.2.10", help="target kernel.org stable version, e.g. 7.2.10. Bump this default after validating a newer kernel.org stable release, or run `hyphaed list-versions` to see the last 5 releases with dates.")
     p.add_argument(
         "--source-mode", choices=["kernel-org"], default="kernel-org",
         help="kernel.org is the only source: clones the stable tag given by --target from the "
@@ -80,6 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
              "Kept as an explicit flag for forward compatibility; there is currently no other value.",
     )
     p.add_argument("--from-phase", choices=phases.ORDER, default=None, help="resume from this phase")
+    p.add_argument("--skip-baseline", action="store_true", help="bare run 1: don't capture the A-side workload baseline first")
+    p.add_argument("--cold", action="store_true", help="include the cold page-cache read of the funding files in the capture (evicts only those files)")
+    p.add_argument("--model", default=None, help="model name for the ~700-token tok/s capture; without it that item is NOT RUN")
 
     sub = p.add_subparsers(dest="cmd")
     # Subparsers intentionally do NOT redefine --target / --dry-run / --yes /
@@ -1598,9 +1589,24 @@ def main(argv: list[str] | None = None) -> int:
         _summary_table(ctx)
         return 0
 
+    from . import round as round_mod
+    bare = args.cmd is None and not args.from_phase
+    running = os.uname().release
+    mode = round_mod.detect_mode(running, args.target) if bare else "run1"
+    if bare and mode == "run2":
+        return round_mod.run2(ctx.repo_root, args.target, running, prev=None, cold=args.cold,
+                              model=args.model, dry_run=ctx.dry_run)
+    if bare:
+        rc = round_mod.run1_prebuild(ctx.repo_root, args.target, running=running, skip_baseline=args.skip_baseline,
+                                     cold=args.cold, model=args.model, dry_run=ctx.dry_run)
+        if rc:
+            return rc
+
     start = args.from_phase or phases.ORDER[0]
     idx = phases.ORDER.index(start)
     _run_phases(ctx, phases.ORDER[idx:])
+    if bare and not ctx.dry_run:
+        round_mod.run1_postbuild(ctx.repo_root, args.target, running)
     log.console.rule("[ok]done[/ok]")
     log.ok("kernel build & install pipeline complete")
     _summary_table(ctx)

@@ -81,51 +81,33 @@ def test_0003_vfs_cache_pressure_is_the_patched_default():
 
 
 # --------------------------------------------------------------------------
-# 0004 — DEFAULT_MAX_MAP_COUNT -> INT_MAX-5.  MASKED, and it matters.
+# 0004 — DEFAULT_MAX_MAP_COUNT -> INT_MAX-5.  MASKED by systemd, and it matters.
 # --------------------------------------------------------------------------
-def test_0004_max_map_count_is_overridden_by_distro_and_greenboost():
-    """0004 raises the compiled-in default to 2147483642. It never takes
-    effect on this machine: systemd ships two sysctl.d files that set 1048576,
-    and GreenBoost then overrides that to 2147483642 at initialization time.
+def test_0004_max_map_count_is_masked_by_the_distro_value():
+    """0004 raises the compiled-in default to 2147483642. systemd's
+    55-map-count.conf sets 1048576 at boot, so the patch never takes effect.
 
-    The patch is carried, applies cleanly, and remains masked by userspace.
-    The live value happens to equal the patch's default (a coincidence), so
-    checking only the number would draw the wrong conclusion. This test
-    verifies provenance instead: the distro sysctl.d files are still
-    setting 1048576, and GreenBoost's setup script is responsible for the
-    2147483642 we observe live.
+    This test used to expect GreenBoost to override that to 2147483642 and sat
+    red from the 7.2.2 bump on. That premise is gone: greenboost_setup.sh
+    (cmd_tune_sysctl) now says "vm.max_map_count at its current value" and its
+    installer test asserts the setting is NOT written; only the supervisor with
+    GB_OS_TUNE=1 touches vm.*, and it's off. So the live value is the distro's,
+    and the test checks that, plus that nobody else in /etc has started setting it.
+    1048576 maps per process is what Ubuntu ships; no workload here is known to
+    need more (not checked under a real 2 GB+ mmap-heavy model load).
     """
     live = int(sysctl("vm.max_map_count"))
-    patched_default = 2147483642
     distro_default = 1048576
 
-    # Distro sysctl.d files still exist and set their value
-    overriders = [
-        p for p in Path("/usr/lib/sysctl.d").glob("*.conf")
-        if re.search(r"^\s*vm\.max_map_count", p.read_text(), re.M)
-    ]
-    assert overriders, (
-        f"distro sysctl.d files no longer set vm.max_map_count; "
-        f"this test's provenance check is invalid"
-    )
+    distro = [p for p in Path("/usr/lib/sysctl.d").glob("*.conf")
+              if re.search(r"^\s*vm\.max_map_count\s*=\s*%d\b" % distro_default, p.read_text(), re.M)]
+    assert distro, "no distro sysctl.d file sets vm.max_map_count=1048576 any more; this test's premise is gone"
 
-    # Distro files set 1048576, not the patch default
-    for p in overriders:
-        content = p.read_text()
-        m = re.search(r"vm\.max_map_count\s*=\s*(\d+)", content)
-        if m:
-            distro_val = int(m.group(1))
-            assert distro_val == distro_default, (
-                f"{p.name} sets vm.max_map_count={distro_val}, "
-                f"want {distro_default}"
-            )
-
-    # Live value is GreenBoost's override, not the distro's or patch's
-    assert live == patched_default, (
-        f"vm.max_map_count={live}; GreenBoost sets it to {patched_default}, "
-        f"distro sets {distro_default}. If this assertion fails, either "
-        f"GreenBoost changed its initialization or an operator manually set it"
-    )
+    local = [p for p in Path("/etc/sysctl.d").glob("*.conf")
+             if re.search(r"^\s*vm\.max_map_count", p.read_text(), re.M)]
+    if local:
+        pytest.skip(f"an operator or GreenBoost now sets vm.max_map_count in {[p.name for p in local]}; re-read it")
+    assert live == distro_default, f"vm.max_map_count={live}, expected the distro's {distro_default}"
 
 
 # --------------------------------------------------------------------------

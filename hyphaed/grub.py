@@ -171,6 +171,30 @@ CMDLINE_PCIE_ACS_OVERRIDE = [
     "pcie_acs_override=downstream,multifunction",
 ]
 
+# Boot-time hardening proposed by `hyphaed security-scan` (kernel-hardening-
+# checker, 2026-10-08). All five parameters exist in 7.2.9 (checked against
+# Documentation/admin-guide/kernel-parameters.txt) and their Kconfig symbols
+# are built in (KFENCE, SHUFFLE_PAGE_ALLOCATOR, BLK_DEV_WRITE_MOUNTED). Always
+# composed, in every preset, so a kernel reinstall can't drop them; a preset's
+# cmdline_extra still wins over these because it is appended afterwards.
+# Costs, stated so nobody has to rediscover them:
+#   page_alloc.shuffle=1        randomises the free lists; small cache-locality cost
+#   kfence.sample_interval=100  sampling heap-bug detector, ~negligible overhead
+#   efi=disable_early_pci_dma   clears bus-master on all PCI devices at EFI handoff
+#   proc_mem.force_override=never  /proc/PID/mem can no longer write read-only
+#                               mappings (some debuggers/injection tools fall
+#                               back to ptrace; Wine/Proton anti-cheat is the
+#                               likeliest oddity)
+# Deliberately NOT here: bdev_allow_write_mounted=0. On 2026-10-09 it made all
+# 12 snap squashfs loop mounts fail at boot ("/dev/loopN: Can't open
+# blockdev"); the two prior boots without it had 0 failures.
+CMDLINE_HARDENING = [
+    "page_alloc.shuffle=1",
+    "kfence.sample_interval=100",
+    "efi=disable_early_pci_dma",
+    "proc_mem.force_override=never",
+]
+
 
 def compose_cmdline(
     profile,
@@ -179,6 +203,7 @@ def compose_cmdline(
     skip_keys_present_in: list[str] | None = None,
     enable_pcie_bus_perf: bool = False,
     enable_pcie_acs_override: bool = False,
+    enable_boot_hardening: bool = True,
 ) -> list[str]:
     """Compose the drop-in cmdline append.
 
@@ -253,6 +278,8 @@ def compose_cmdline(
             "(see CMDLINE_PCIE_ACS_OVERRIDE's comment in hyphaed/grub.py)"
         )
         parts.extend(CMDLINE_PCIE_ACS_OVERRIDE)
+    if enable_boot_hardening:
+        parts.extend(CMDLINE_HARDENING)
     if preset_extra:
         parts.extend(preset_extra)
 

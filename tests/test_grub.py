@@ -187,3 +187,26 @@ def test_read_current_cmdline_config_deduplicates(tmp_path, monkeypatch):
     assert "quiet" in tokens
     assert "iommu=pt" in tokens
     assert "transparent_hugepage=always" in tokens
+
+
+def test_compose_cmdline_always_includes_boot_hardening():
+    from hyphaed import grub
+    out = grub.compose_cmdline(_profile())
+    for tok in grub.CMDLINE_HARDENING:
+        assert tok in out, tok
+
+
+def test_boot_hardening_excludes_bdev_allow_write_mounted():
+    # breaks every snap squashfs loop mount at boot (2026-10-09)
+    from hyphaed import grub
+    assert not any("bdev_allow_write_mounted" in t for t in grub.CMDLINE_HARDENING)
+
+
+def test_boot_hardening_survives_every_preset_and_can_be_overridden():
+    from hyphaed import grub, presets
+    for name in presets.list_names() if hasattr(presets, "list_names") else ["gaming-ai-vm", "ai-only", "safe", "gaming-ai-laptop-amd"]:
+        out = grub.compose_cmdline(_profile(), presets.load(name).cmdline_extra)
+        assert all(t in out for t in grub.CMDLINE_HARDENING), name
+    out = grub.compose_cmdline(_profile(), ["proc_mem.force_override=ptrace"])
+    assert "proc_mem.force_override=ptrace" in out
+    assert "proc_mem.force_override=never" not in out
