@@ -52,7 +52,10 @@ def test_0002_swappiness_is_masked_by_userspace():
     is identical whether or not the patch is applied, so it can never
     testify. Recorded so nobody cites `vm.swappiness == 10` as proof again.
     """
-    assert sysctl("vm.swappiness") == "10"
+    # gb-supervisor moves swappiness between 5 and 10 on PSI memory pressure
+    # (journal: "lever=swappiness 10→5 ... psi_mem_pressure"), so the live value
+    # flaps. Either is userspace's, neither is the patch's default.
+    assert sysctl("vm.swappiness") in ("5", "10")
 
     setters = [
         p for p in Path("/etc/sysctl.d").glob("*.conf")
@@ -90,8 +93,8 @@ def test_0004_max_map_count_is_masked_by_the_distro_value():
     This test used to expect GreenBoost to override that to 2147483642 and sat
     red from the 7.2.2 bump on. That premise is gone: greenboost_setup.sh
     (cmd_tune_sysctl) now says "vm.max_map_count at its current value" and its
-    installer test asserts the setting is NOT written; only the supervisor with
-    GB_OS_TUNE=1 touches vm.*, and it's off. So the live value is the distro's,
+    installer test asserts the setting is NOT written; the supervisor moves other
+    vm.* levers at run time but not this one. So the live value is the distro's,
     and the test checks that, plus that nobody else in /etc has started setting it.
     1048576 maps per process is what Ubuntu ships; no workload here is known to
     need more (not checked under a real 2 GB+ mmap-heavy model load).

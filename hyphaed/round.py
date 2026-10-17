@@ -59,7 +59,21 @@ def run1_prebuild(repo: Path, target: str, *, running: str, skip_baseline: bool,
         if rc != 0:
             log.err(f"bump stage {name} failed (rc={rc}); stopping before the build")
             return rc
+    _invalidate_if_retargeted(repo, target)
     return 0
+
+
+def _invalidate_if_retargeted(repo: Path, target: str) -> None:
+    """The phase cache is state-based: phases listed as done are skipped whatever the target. A state
+    built for another version would make the build a silent no-op, so drop it from `source` on."""
+    from .phases import ORDER
+    from .state import PersistedState
+    d = repo / "state" / "machines" / os.uname().nodename
+    st = PersistedState.load(d)
+    if not str(getattr(st, "kernel_pkgver", "") or "").startswith(target + "-"):
+        st.invalidate_from("source", ORDER)
+        st.save(d)
+        log.info(f"phase cache held another version; invalidated from source for {target}")
 
 
 def run1_postbuild(repo: Path, target: str, running: str) -> int:

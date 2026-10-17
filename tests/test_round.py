@@ -92,3 +92,17 @@ def test_dry_run_prebuild_mutates_nothing(tmp_path):
     rc = rnd.run1_prebuild(tmp_path, "7.2.10", running="7.2.9-hyphaed", skip_baseline=False, cold=False,
                            model=None, dry_run=True)
     assert rc == 0 and not list(tmp_path.iterdir())
+
+
+def test_retarget_invalidates_stale_phase_cache(tmp_path, monkeypatch):
+    from hyphaed.phases import ORDER
+    from hyphaed.state import PersistedState
+    monkeypatch.setattr(rnd.os, "uname", lambda: type("U", (), {"nodename": "box"})())
+    d = tmp_path / "state" / "machines" / "box"
+    st = PersistedState.load(d)
+    st.kernel_pkgver = "7.2.9-1+rptr-nvbw-wl"
+    for n in ORDER:
+        st.mark_complete(n, 1.0)
+    st.save(d)
+    rnd._invalidate_if_retargeted(tmp_path, "7.2.10")
+    assert PersistedState.load(d).phases_completed == ["detect"]
