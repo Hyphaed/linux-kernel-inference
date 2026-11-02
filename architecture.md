@@ -11,7 +11,7 @@ phase from a previous run's saved state.
 ## Phase pipeline
 
 ```
-detect → source → patch → configure → build → package → install → postinstall
+detect → source → patch → configure → security → build → package → install → nvidia → desktop → postinstall
   [1]      [2]     [3]       [4]        [5]      [6]       [7]         [8]
 ```
 
@@ -30,6 +30,8 @@ registered in `phases/__init__.py::ORDER` and `MODULES`.
 | `build` | `ctx.source_dir`, `ctx.kernel_pkgver` | `.deb` files in `build/` |
 | `package` | `.deb` files | `out/debs/*.deb` (packages only), `out/manifest.json`, `out/System.map-<pkgver>` |
 | `install` | `out/debs/`, GRUB state | installed kernel, `/etc/default/grub.d/90-hyphaed.cfg` |
+| `nvidia` | pinned open-gpu-kernel-modules commit, `.run` userspace | modules built with the kernel toolchain, installed to `extra/nvidia-hyphaed`, apt 615.x purged (rollback list saved) |
+| `desktop` | pinned Ubuntu mutter/gnome-shell versions | native `-O3 -march=native` + LTO `+hyphaed` debs, held; rollback list saved |
 | `postinstall` | running kernel, DKMS | DKMS modules rebuilt; smoke-check report |
 
 ### Ctx state object

@@ -76,15 +76,63 @@ changes do nothing for it.
 * **DNS**: `systemd-resolved` sends everything to `dnscrypt-proxy` on
   `127.0.2.1`. Verify with `resolvectl status`.
 
+### The `hwgtest` tunnel wasn't a security VPN (2026-10-28)
+
+`hwgtest` was a NetworkManager WireGuard profile imported from a 12 October
+LAN test: address `10.77.0.2/32`, one peer (the Omen laptop) with
+`AllowedIPs = 10.77.0.1/32`. It only ever carried traffic to the laptop, so it
+encrypted nothing headed for the internet, and it auto-activated at every boot
+with the peer offline. It's deleted and its three key files (`~/hwgtest.conf`,
+`~/hardened-wg-lan-test.conf`, `~/hardened-wg-client.conf`) are shredded. The
+Omen's server-side peer is untouched; remove it there when the laptop is on.
+
+No full-tunnel VPN yet (decision 2026-10-28). When there is one it needs an
+exit server outside the house. It hides the IP and traffic from the ISP; it
+doesn't change the Linux TCP/IP fingerprint that destination sites see.
+
+### CrowdSec had an agent and no bouncer (2026-10-28)
+
+The agent (1.4.6, Ubuntu ESM-pinned) was installed and active, but
+`crowdsec-firewall-bouncer-nftables` wasn't, and the bouncer is the part that
+drops packets. So no malicious IP had ever been blocked. `ufw` only
+default-denies; it has no reputation list.
+
+```bash
+sudo bash diagnostics/install-crowdsec.sh     # bouncer, LAN whitelist, verification
+python -m hyphaed harden                      # new "CrowdSec agent + nftables bouncer" row
+```
+
+The bouncer hooks `input` and `forward`; `forward` matters because Docker's
+published ports bypass ufw. The `api.cti` key needs agent >= 1.5, so on 1.4.6
+the script skips it and says so; the community blocklist doesn't need it.
+
+### chkrootkit reports `INFECTED` on basename/date/dirname/echo/env
+
+Those five resolve to `/usr/lib/cargo/bin/coreutils/*` (uutils, Ubuntu 26.04's
+default coreutils), which chkrootkit's signature checks don't recognise.
+`debsums rust-coreutils` is clean. Treat as a false positive unless
+`debsums -c` in `diagnostics/security-scan-2026-10-28.sh` disagrees.
+
 ### Found and still to apply (needs root)
 
 * Port 25 (postfix) listens on every interface. Fix: `postconf -e
   'inet_interfaces = loopback-only'`.
 * Ports 5433, 4200 (the Angular dev server), 9090 and 9009 listen on every
   interface. Identify each, then bind to loopback or block in ufw.
-* SSH on 22 is reachable on all interfaces and root login could not be
-  confirmed off. `python -m hyphaed harden apply` rate-limits SSH and writes
-  the `PermitRootLogin` drop-in after checking it will not lock you out.
+* **Policy (2026-10-28): nobody connects to this workstation over SSH.**
+  Outbound `ssh` to other machines is fine and untouched. Until then
+  `ssh.service` and `ssh.socket` were enabled, the server listened on
+  `0.0.0.0:22` and `[::]:22`, ufw had `22/tcp LIMIT IN`, and password login was
+  on. `python -m hyphaed harden` now has an "SSH: inbound closed" item that
+  stops both units and removes the ufw rule. The old "rate-limit SSH" item is
+  gone: its fix, `ufw limit 22/tcp`, opened the port this policy closes. The
+  one thing that used the server, the macOS guest's `fastcopy-serve` key, now
+  works without SSH: the guest drops a request into the Public SMB share and a
+  systemd user watcher on the host packs the path (see
+  `~/vmware/OSX-KVM/fastcopy-pack`). To close SSH only:
+  `sudo systemctl disable --now ssh.socket ssh.service` and
+  `sudo ufw delete limit 22/tcp`, then `ss -tln 'sport = :22'` should print
+  nothing.
 * 140 unwaived kernel-checker fails. `python -m hyphaed security-scan apply`
   applies only the sysctl ones that cost nothing; the kconfig and cmdline ones
   stay proposals.
