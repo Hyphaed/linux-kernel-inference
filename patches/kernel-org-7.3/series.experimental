@@ -1,0 +1,5 @@
+# Experimental series (ADR-009). Applied AFTER `series`, only with
+# `python -m hyphaed --experimental` or HYPHAED_EXPERIMENTAL=1.
+# Same format as `series`. A patch lives here until the two-run A/B (hyphaed/round.py)
+# shows a measured gain, then it moves to `series`; otherwise it is dropped and the
+# result recorded in docs/research/. Nothing here goes upstream without ADR-004 evidence.

@@ -1,0 +1,34 @@
+# Pinned sources for patches/kernel-org-7.3/series.
+# Carried from VENDOR-kernel-org-7.2.lock on 2026-10-31; sha256 values are the
+# unchanged 7.2 patch FILE hashes until a patch is re-anchored for 7.3.
+# Not yet validated on v7.3.1 (see series header).
+
+../custom/0001-cachyos-bore-7.2.patch                       file://$KI_ROOT/patches/custom/0001-cachyos-bore-7.2.patch                          61b9543e400d6fb38a68ee2276538ae14834bec75d7b06d3e1ac9977174ff619  local-file
+../custom/0002-xanmod-vmscan-swappiness-7.2.5.patch         file://$KI_ROOT/patches/custom/0002-xanmod-vmscan-swappiness-7.2.5.patch           c4e5f45817222df5bc93d6166503e25bdb8bb9cb51749e5c27271897780135ca  local-file
+0003-xanmod-zen-vfs-cache.patch                                git+file://$KI_ROOT/linux@7ac91c5588e7                                              af1a0b1c26a3007dfa6a30853cb958350a311ac4d5d4b94248f5feb2d83deff9  git-commit
+0004-xanmod-zen-max-map-count.patch                            git+file://$KI_ROOT/linux@ed2a9eca2135                                              096e4f345903c7e7b3b75a7c1d868b2a491469a47163f71ec091a98ca4f314b4  git-commit
+0005-xanmod-zen-500hz-timer.patch                              git+file://$KI_ROOT/linux@0988dbc5822a                                              c6c524cbdec8adc786f726a412975aa9af895fcfbd8e5aad26a25487e95c9167  git-commit
+0006-xanmod-zen-dm-crypt-wq.patch                              git+file://$KI_ROOT/linux@9c594ca6d407                                              edcc449b52067d73398f227e44f0a583053ca9735e55ef111ac72c25d40c9732  git-commit
+0007-xanmod-zen-evdev-rcu.patch                                git+file://$KI_ROOT/linux@c1f19aa98e54                                              4d280461883bdeac22e8b14c727f872d0d328bd7e74b0f16a8ce776e64658557  git-commit
+0008-xanmod-blk-wbt-latency.patch                              git+file://$KI_ROOT/linux@89d0ae046966                                              c26f45a04ec9935aa212da0c078a3ef058025dd020dc9d9994f4acb04d14f37d  git-commit
+0009-xanmod-blk-rq-affinity.patch                              git+file://$KI_ROOT/linux@bae2948f36c9                                              fe1f8d97b7dcff84b66f0e750b4f9375a9440982add6eee23e66c16a879a3df3  git-commit
+0010-xanmod-mq-deadline-front-merge.patch                      git+file://$KI_ROOT/linux@fd699380cd6a                                              2b81c7b62e2c225060515c5f5f7f71de2a88f6248be093648b92a4def1b9c429  git-commit
+0011-xanmod-mq-deadline-write-prio.patch                       git+file://$KI_ROOT/linux@3868ed8dbd88                                              53cdba9c08367293e8bdf25ea86c009af92159fc79cb4e931a533fcfa378f2a2  git-commit
+0012-tkg-pci-pme-timeout.patch                                 file://$KI_ROOT/patches/custom/0014-tkg-pci-pme-timeout.patch                       96b7670e0d5bcf01ff2333a743e86f340638390d6ad8966368e64ec323b08beb  local-file
+0013-nvme-lower-default-apst-latency.patch                     file://$KI_ROOT/patches/custom/0015-nvme-lower-default-apst-latency.patch           23b1420a902d48f877fffdef6f0a98349f7847278b3bea25a1a40a63ce3434c3  local-file
+0014-mm-thp-defrag-defer-madvise-default.patch                 file://$KI_ROOT/patches/custom/0016-mm-thp-defrag-defer-madvise-default.patch       328bf8de4d418904ae3a98834c792ab3fb15ebfa39b1e734807ce03dac3823e2  local-file
+0015-kbuild-ubsan-extmod-opt-in.patch                          file://$KI_ROOT/patches/kernel-org-7.2/0015-kbuild-ubsan-extmod-opt-in.patch        3ba3cd7d30dd44abf8807c96de5273c4a632b65d9591c9e87feb602d4b0a07fa  local-file
+0018-xanmod-pci-acs-override.patch                             git+file://$KI_ROOT/linux@84598b0cf5c4                                              f92f931ded3103ad94b9f2a4a5f2a6cc7f4ce6f901c3fd89f2081db6b407267a  git-commit
+../custom/0019-dma-buf-priority-hint.patch                  file://$KI_ROOT/patches/custom/0019-dma-buf-priority-hint.patch                     74b4d3fe2ac0ee927e1690c99d72fe8039d425c9fb95771361c8d5e34d359d84  local-file
+../custom/0020-dma-buf-compressed-descriptor.patch          file://$KI_ROOT/patches/custom/0020-dma-buf-compressed-descriptor.patch             b0bf13a4d720858301a039d888d983dea4777a1c4e3df8219e0763f23a97e97a  local-file
+0025-xanmod-mm-workingset-protection.patch                     git+file://$KI_ROOT/linux@80af49bc67fa                                              717bdb76bbff976603d54112b6efbd9fc728ac5f4588b2255868c6f0961d1dfa  git-commit
+0026-xanmod-kbuild-extmod-sign-config.patch                    git+file://$KI_ROOT/linux@19e5ebe24766                                              3016c3f798ec0b0e587c695fc5ac253075492db315e2d014a0df9b6fa14e5758  git-commit
+0027-xanmod-kbuild-deb-dbg-optin.patch                         git+file://$KI_ROOT/linux@c9d752c21d51                                              3ca940b1080248bc91c7e806a77550e106afa696373440c85f05ebf207259610  git-commit
+../custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch  file://$KI_ROOT/patches/custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch  941a4a3e4c6dad8f3883c4022392b734a908127e1ec3df11a741b042c97e9484  local-file
+../custom/0024-apparmor-restrict-unprivileged-userns.patch     file://$KI_ROOT/patches/custom/0024-apparmor-restrict-unprivileged-userns.patch     07b7f7be849ef8faf6dbbf87f576837c08961d74614dd33a98d89e32660761ec  local-file
+
+../custom/0028-apparmor-userns-sfs-advertise.patch          file://$KI_ROOT/patches/custom/0028-apparmor-userns-sfs-advertise.patch          d2a0a34d36edf5071bd29a224b1ecdec029c4285bb4f0d9964044b3065f3af05  local-file
+
+../custom/0029-x86-pci-single-node-root-bus-node.patch      file://$KI_ROOT/patches/custom/0029-x86-pci-single-node-root-bus-node.patch      51a03039d9b18a6213551c15626431fc7eeda3e7f1bbe9fdfeac728490ac8115  local-file
+
+../custom/0030-pci-skip-futile-retrain-on-empty-port.patch  file://$KI_ROOT/patches/custom/0030-pci-skip-futile-retrain-on-empty-port.patch  a6e192299244dc44137679ce5882ed75c6801bc4d15dc1432356f0ad59ef63f2  local-file

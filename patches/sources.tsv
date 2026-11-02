@@ -10,7 +10,7 @@
 zen-kernel	https://github.com/zen-kernel/zen-kernel	7.2/main	7.2	downstream-tree	any	clone	Zen patches (bbr3, dmem-ttm branches also exist)
 liquorix	https://github.com/damentz/liquorix-package	7.2/master	7.2	patch-set	any	clone	Liquorix config + zen-derived patches
 gentoo-linux-patches	https://anongit.gentoo.org/git/proj/linux-patches.git	7.2	7.2	distro-patches	any	clone	Gentoo genpatches for 7.2
-sirlucjan	https://github.com/sirlucjan/kernel-patches	HEAD	multi	patch-set	any	clone	per-version directories; look for 7.2
+sirlucjan	https://github.com/sirlucjan/kernel-patches	HEAD	multi	patch-set	any	clone	ARCHIVED 2026-10-22: historical index only; per-version directories
 graysky-compiler	https://github.com/graysky2/kernel_compiler_patch	HEAD	multi	patch-set	intel-cpu	clone	-march patches; rejected last bump vs X86_NATIVE_CPU=y
 frogging-community	https://github.com/Frogging-Family/community-patches	HEAD	multi	patch-set	any	clone	tkg community patches
 bore-scheduler	https://github.com/firelzrd/bore-scheduler	HEAD	multi	scheduler	any	clone	BORE upstream author; check patches/linux/stable
@@ -47,3 +47,6 @@ debian-kernel	https://salsa.debian.org/kernel-team/linux	debian/7.2/forky	7.2	di
 fedora-kernel	https://src.fedoraproject.org/rpms/kernel	rawhide	multi	distro-patches	any	ls	Fedora rawhide spec + patches
 opensuse-kernel	https://github.com/openSUSE/kernel-source	HEAD	multi	distro-patches	any	ls	SUSE kernel-source (patches.suse/)
 ubuntu-resolute	https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/resolute	master	7.0	distro-patches	any	clone	Ubuntu 26.04 kernel git (debian.master/patches)
+intel-lts	https://github.com/intel/linux-intel-lts	HEAD	multi	vendor-tree	intel-cpu	ls	Intel reference LTS tree for Intel platform features (not a production kernel)
+intel-quilt	https://github.com/intel/linux-intel-quilt	HEAD	multi	patch-set	intel-cpu	ls	Intel patch series by feature
+nix-cachyos-kernel	https://github.com/xddxdd/nix-cachyos-kernel	HEAD	multi	patch-set	any	ls	Nix packaging of CachyOS kernels; shows which CachyOS patch sets track each series

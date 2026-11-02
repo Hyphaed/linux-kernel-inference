@@ -1,0 +1,34 @@
+# hyphaed patch series for --source-mode kernel-org --target 7.3 (ordered)
+#
+# Created 2026-10-31 by carrying patches/kernel-org-7.2/series across the
+# 7.2 -> 7.3 bump (ADR-009 round, v7.3.1 = 79a90760). NOT yet validated on
+# v7.3.1: run `SWEEP_ONLY=1 make bump VER=7.3.1`, then stage 30. Every entry
+# below is the 7.2.12 series unchanged until the verdicts doc says otherwise.
+# Entries that fail to apply get ported or dropped with the reason recorded in
+# docs/research/7.3.1-patch-sweep-*.md.
+../custom/0001-cachyos-bore-7.2.patch
+../custom/0002-xanmod-vmscan-swappiness-7.2.5.patch
+0003-xanmod-zen-vfs-cache.patch
+0004-xanmod-zen-max-map-count.patch
+0005-xanmod-zen-500hz-timer.patch
+0006-xanmod-zen-dm-crypt-wq.patch
+0007-xanmod-zen-evdev-rcu.patch
+0008-xanmod-blk-wbt-latency.patch
+0009-xanmod-blk-rq-affinity.patch
+0010-xanmod-mq-deadline-front-merge.patch
+0011-xanmod-mq-deadline-write-prio.patch
+0012-tkg-pci-pme-timeout.patch
+0013-nvme-lower-default-apst-latency.patch
+0014-mm-thp-defrag-defer-madvise-default.patch
+0015-kbuild-ubsan-extmod-opt-in.patch
+0018-xanmod-pci-acs-override.patch
+../custom/0019-dma-buf-priority-hint.patch
+../custom/0020-dma-buf-compressed-descriptor.patch
+0025-xanmod-mm-workingset-protection.patch
+0026-xanmod-kbuild-extmod-sign-config.patch
+0027-xanmod-kbuild-deb-dbg-optin.patch
+../custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch
+../custom/0024-apparmor-restrict-unprivileged-userns.patch
+../custom/0028-apparmor-userns-sfs-advertise.patch
+../custom/0029-x86-pci-single-node-root-bus-node.patch
+../custom/0030-pci-skip-futile-retrain-on-empty-port.patch
