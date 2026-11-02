@@ -15,6 +15,9 @@ class Preset:
     cmdline_extra: list[str] = field(default_factory=list)
     patches: list[str] = field(default_factory=list)
     dkms_modules: list[str] = field(default_factory=list)
+    nvidia: dict = field(default_factory=dict)
+    desktop: dict = field(default_factory=dict)
+    proton: dict = field(default_factory=dict)
 
 
 def load(name: str) -> Preset:
@@ -29,6 +32,9 @@ def load(name: str) -> Preset:
         cmdline_extra=list(data.get("cmdline_extra", [])),
         patches=list(data.get("patches", [])),
         dkms_modules=list(data.get("dkms_modules", [])),
+        nvidia=dict(data.get("nvidia") or {}),
+        desktop=dict(data.get("desktop") or {}),
+        proton=dict(data.get("proton") or {}),
     )
 
 

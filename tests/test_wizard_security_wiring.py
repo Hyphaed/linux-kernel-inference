@@ -25,7 +25,7 @@ def _source() -> str:
 
 def test_security_is_in_the_phases_array():
     src = _source()
-    assert "PHASES=(detect source patch configure security build package install postinstall)" in src, (
+    assert "PHASES=(detect source patch configure security build package install postinstall nvidia desktop proton)" in src, (
         "PHASES must include 'security' between configure and build — same "
         "position as hyphaed/phases/__init__.py::ORDER."
     )
@@ -39,7 +39,7 @@ def test_both_inline_checkpoint_orderings_include_security():
     src = _source()
     occurrences = src.count(
         'order = ["detect", "source", "patch", "configure", "security", '
-        '"build", "package", "install", "postinstall"]'
+        '"build", "package", "install", "postinstall", "nvidia", "desktop", "proton"]'
     )
     assert occurrences == 2, (
         f"expected both inline phase-order literals to include 'security', "

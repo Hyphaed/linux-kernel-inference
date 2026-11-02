@@ -20,12 +20,14 @@ fragments:
   - 41-kvm-nested.config
   - 42-io-uring-bpf.config
   - 43-ntsync.config
+  - 44-block-iosched.config
   - 50-net-bbr-fq.config
   - 60-nvidia-wayland.config
   - 61-no-amdgpu-no-nouveau.config
   - 80-raptorlake-intel.config
   - 81-native-cpu-opt.config
   - 82-strip-unused-modules.config
+  - 85-ncore-board-trim.config   # bound to the ncore motherboard (requires-board); skipped on any other machine
   - 70-greenboost-required.config   # MUST be last
 
 cmdline_extra: []
@@ -62,3 +64,34 @@ dkms_modules:
   - nvidia-dkms
   - greenboost
   - vmware-host-modules
+
+# Optimized NVIDIA open modules built from source (phase "nvidia"). The userspace .run
+# is installed with --no-kernel-modules so both halves are 615.78.08. NVIDIA publishes
+# no checksum file for the .run, so run_sha256 is the sha256 of the 2026-10-31 download.
+nvidia:
+  from_source: true
+  version: "615.78.08"
+  src: ~/Dev/github_gaming/open-gpu-kernel-modules
+  commit: ca2d03e6
+  run_file: build/nvidia/NVIDIA-Linux-x86_64-615.78.08.run
+  run_sha256: 3e3f6dddc2ee767a08185300af7be3cb286ece76698d2dde3524599782d07ffe
+
+# Host-optimized mutter + gnome-shell rebuild (phase "desktop"), Ubuntu 26.04 sources.
+desktop:
+  enabled: true
+  mutter: "50.1-0ubuntu2.5"
+  gnome_shell: "50.1-0ubuntu1.4"
+
+# Steam compatibility tools (phase "proton"). "GreenBoost Proton" in Steam's picker is a wrapper over Valve's own
+# Proton, so the step reports the installed Valve builds and refreshes the wrapper from greenboost_gaming.
+# rebuild_gb_nr: the from-source proton-gb-nr rebuild (about 25 GB, 1+ hour). On at the owner's request (2026-10-31):
+# upstream moved all four submodule pins (wine, dxvk, dxvk-nvapi, vkd3d-proton). No benchmark yet shows it beats
+# Valve's builds (grenboost_gaming bench/results is empty), so A/B it per ADR-004 before making it the default tool.
+proton:
+  enabled: true
+  greenboost_proton_dir: ~/Dev/greenboost_all/greenboost_gaming/greenboost_proton
+  rebuild_gb_nr: true
+  repo: ~/Dev/github_gaming/grenboost_gaming
+  build_root: ~/Dev/github_gaming
+  branch: bleeding-edge
+  build_name: proton-gb-nr

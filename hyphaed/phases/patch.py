@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import re
 from pathlib import Path
 
@@ -24,6 +25,21 @@ def _read_series(series_file: Path) -> list[Path]:
             log.warn(f"patch listed in series but missing on disk: {p}")
             continue
         patches.append(p)
+    return patches
+
+
+def _experimental_enabled(ctx) -> bool:
+    """Opt-in for `series.experimental` (ADR-009): `--experimental` or HYPHAED_EXPERIMENTAL=1."""
+    args = getattr(ctx, "args", None)
+    return bool(getattr(args, "experimental", False)) or os.environ.get("HYPHAED_EXPERIMENTAL") == "1"
+
+
+def _read_full_series(series_file: Path, experimental: bool) -> list[Path]:
+    """The default series, plus `series.experimental` beside it when opted in.
+    A missing experimental file is an empty list, not an error."""
+    patches = _read_series(series_file)
+    if experimental:
+        patches += _read_series(series_file.with_name("series.experimental"))
     return patches
 
 
@@ -128,9 +144,12 @@ def _series_file_for(repo_root: Path, source_mode: str, ctx=None) -> Path:
 
 
 def run_phase(ctx) -> list[Path]:
-    log.banner("Phase 3/9 — Apply patch series")
+    log.banner("Phase 3/12 — Apply patch series")
     series_file = _series_file_for(ctx.repo_root, getattr(ctx, "source_mode", "ubuntu"), ctx)
-    patches = _read_series(series_file)
+    experimental = _experimental_enabled(ctx)
+    patches = _read_full_series(series_file, experimental)
+    if experimental:
+        log.warn("experimental series enabled: patches without A/B evidence are in this build (ADR-009)")
 
     if not patches:
         log.warn(f"no patches listed in {series_file} — building plain kernel with config overlay only")

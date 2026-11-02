@@ -6,7 +6,7 @@ from hyphaed.cli import _phase_deps
 
 
 def test_phase_order_is_consistent():
-    expected = ["detect", "source", "patch", "configure", "security", "build", "package", "install", "postinstall"]
+    expected = ["detect", "source", "patch", "configure", "security", "build", "package", "install", "postinstall", "nvidia", "desktop", "proton"]
     assert phases.ORDER == expected
 
 
@@ -28,7 +28,7 @@ def test_every_non_detect_phase_has_deps_entry():
 
 def test_security_is_a_prerequisite_of_build_and_later():
     deps = _phase_deps()
-    for name in ("build", "package", "install", "postinstall"):
+    for name in ("build", "package", "install", "postinstall", "nvidia", "desktop"):
         assert "security" in deps[name], f"security missing from {name} prerequisites"
 
 
@@ -36,5 +36,5 @@ def test_patch_is_a_prerequisite_of_configure_and_later():
     # Regression guard for the 2026-07-09 bug: patch omitted from this dict
     # meant `--phase package` could silently build a vanilla, unpatched kernel.
     deps = _phase_deps()
-    for name in ("configure", "build", "package", "install", "postinstall"):
+    for name in ("configure", "build", "package", "install", "postinstall", "nvidia", "desktop"):
         assert "patch" in deps[name], f"patch missing from {name} prerequisites"

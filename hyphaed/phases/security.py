@@ -161,7 +161,7 @@ def _run_vex_checker(config_path: Path, source_dir: Path | None, out_dir: Path) 
 
 
 def run_phase(ctx) -> None:
-    log.banner("Phase 5/9 — Security (hardening-checker + CVE scan)")
+    log.banner("Phase 5/12 — Security (hardening-checker + CVE scan)")
 
     config_path = (ctx.source_dir / ".config") if ctx.source_dir else None
     if config_path is None or (not ctx.dry_run and not config_path.exists()):

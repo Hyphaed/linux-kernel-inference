@@ -51,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("-v", "--version", action="version", version=f"hyphaed {__version__}")
     p.add_argument("--dry-run", action="store_true", help="print actions without executing them")
+    p.add_argument("--experimental", action="store_true", help="also apply patches/kernel-org-<MM>/series.experimental (unmeasured patches, ADR-009); same as HYPHAED_EXPERIMENTAL=1")
     p.add_argument("--non-interactive", action="store_true", help="never prompt")
     p.add_argument("-y", "--yes", action="store_true", help="auto-accept non-hard prompts")
     p.add_argument("--preset", default="auto", help=f"preset name (default: auto — detected from hardware). Available: {','.join(presets.list_available()) or 'none'}")
@@ -202,7 +203,7 @@ def _make_ctx(args: argparse.Namespace) -> Ctx:
 
 
 def _maybe_keepalive_sudo(ctx: Ctx, phase_names: list[str]) -> None:
-    needs_sudo = any(n in {"install", "postinstall"} for n in phase_names)
+    needs_sudo = any(n in {"install", "nvidia", "desktop", "postinstall"} for n in phase_names)
     if not needs_sudo or ctx.dry_run:
         return
     from .util.run import sudo_keepalive
@@ -1411,6 +1412,9 @@ def _phase_deps() -> dict[str, list[str]]:
         "build":       ["detect", "source", "patch", "configure", "security"],
         "package":     ["detect", "source", "patch", "configure", "security", "build"],
         "install":     ["detect", "source", "patch", "configure", "security", "build", "package"],
+        "nvidia":      ["detect", "source", "patch", "configure", "security", "build", "package", "install"],
+        "desktop":     ["detect", "source", "patch", "configure", "security", "build", "package", "install"],
+        "proton":      ["detect"],
         "postinstall": ["detect", "source", "patch", "configure", "security", "build", "package", "install"],
     }
 

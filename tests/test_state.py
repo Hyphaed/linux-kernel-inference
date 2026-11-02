@@ -42,7 +42,7 @@ def test_persisted_state_load_corrupt_file_is_empty(tmp_path):
     assert s.profile is None
 
 
-_ORDER = ["detect", "source", "patch", "configure", "security", "build", "package", "install", "postinstall"]
+_ORDER = ["detect", "source", "patch", "configure", "security", "build", "package", "install", "postinstall", "nvidia", "desktop", "proton"]
 
 
 def test_invalidate_from_drops_phase_and_later_only():

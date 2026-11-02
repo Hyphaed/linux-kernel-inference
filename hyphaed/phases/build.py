@@ -624,7 +624,7 @@ def _run_make_with_progress(
 
 
 def run_phase(ctx) -> list[Path]:
-    log.banner("Phase 6/9 — Build kernel (.deb)")
+    log.banner("Phase 6/12 — Build kernel (.deb)")
     src = ctx.source_dir
     profile = ctx.profile
 

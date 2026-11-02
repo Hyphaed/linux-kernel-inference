@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import tarfile
+import time
 import types
 import subprocess
 from pathlib import Path
@@ -79,9 +80,57 @@ def _newest_stable(tags) -> tuple[int, ...]:
     return best
 
 
-def _refresh_stable_tags(repo_dir: Path) -> None:
+#: Newest-first cap on tags requested in one refresh, so a long-stale mirror
+#: doesn't build an enormous refspec list.
+_MAX_TAGS_PER_FETCH = 10
+
+_STABLE_TAG_RE = re.compile(r"^v\d+\.\d+(?:\.\d+)?$")
+
+
+def _tag_key(tag: str) -> tuple[int, ...]:
+    """Comparable (major, minor, patch) for vX.Y / vX.Y.Z; vX.Y is X.Y.0."""
+    return _newest_stable([tag])
+
+
+def _local_stable_tags(repo_dir: Path) -> list[str]:
+    r = run(["git", "-C", str(repo_dir), "tag", "--sort=-version:refname"],
+            check=False, force=True)
+    tags = r.stdout.splitlines() if r.ok() else []
+    return [t.strip() for t in tags if _STABLE_TAG_RE.match(t.strip())]
+
+
+def _missing_tags(remote_tags: list[str], local_tags: list[str]) -> list[str]:
+    """Remote stable tags the mirror lacks, newest first, capped.
+
+    "Newer than the newest local tag" is not enough: with v7.3 (mainline) in
+    the mirror, v7.2.13 is older than the newest tag yet is exactly what the
+    picker needs. So compare per series (major.minor), over the newest three
+    series the mirror holds; a series the mirror has never seen counts only
+    if it is newer than everything local.
+    """
+    keys = [_tag_key(t) for t in local_tags]
+    if not keys:
+        return []
+    newest_per_series: dict[tuple[int, int], tuple[int, ...]] = {}
+    for k in keys:
+        newest_per_series[k[:2]] = max(k, newest_per_series.get(k[:2], ()))
+    recent = sorted(newest_per_series, reverse=True)[:3]
+    overall = max(keys)
+    out = []
+    for t in remote_tags:
+        k = _tag_key(t)
+        if k[:2] in recent:
+            if k > newest_per_series[k[:2]]:
+                out.append(t)
+        elif k > overall:
+            out.append(t)
+    return sorted(out, key=_tag_key, reverse=True)[:_MAX_TAGS_PER_FETCH]
+
+
+def _refresh_stable_tags(repo_dir: Path) -> list[str] | None:
     """Pull new stable tags into the mirror, from kernel.org, only when there
-    are any.
+    are any. Returns the stable tags kernel.org advertises (so the caller can
+    still list a release whose fetch failed), or None if no source answered.
 
     **Source of truth is kernel.org**, `KERNEL_ORG_GIT` — the same URL
     `_fetch_kernel_org()` already clones the actual source from. The mirror's
@@ -99,12 +148,13 @@ def _refresh_stable_tags(repo_dir: Path) -> None:
     enumerated the entire Linux tag namespace and could not contribute one
     stable release.
 
-    **It does not fetch unconditionally.** `git fetch --tags` has no
-    "newest N" form; it negotiates the whole namespace, ~5,700 tags here.
-    `git ls-remote` answers "is there anything newer than what I have" in
-    **0.25 s** against kernel.org without transferring a single object. So the
-    common case (nothing new) costs one cheap round trip and the real fetch
-    runs only when a release we lack actually exists.
+    **It does not fetch unconditionally, and never with `--tags`.** `git fetch
+    --tags` has no "newest N" form; it negotiates the whole namespace, ~5,700
+    tags here, and on this shallow mirror it overran the 20 s ceiling and was
+    killed, so a new release never reached the picker. `git ls-remote` answers
+    "is there anything newer than what I have" in **0.25 s** without
+    transferring a single object, and the fetch then names only the missing
+    tags (`--depth 1 --no-tags refs/tags/vX:refs/tags/vX`, ~36 KiB each).
 
     Every network step is bounded and degrades to the local tag list. Listing
     releases is a convenience and must never be the reason a prompt fails to
@@ -120,9 +170,7 @@ def _refresh_stable_tags(repo_dir: Path) -> None:
     if "stable" in (remotes_r.stdout or "").splitlines():
         sources.append("stable")
 
-    local_r = run(["git", "-C", str(repo_dir), "tag", "--sort=-version:refname"],
-                  check=False, force=True)
-    local_newest = _newest_stable(local_r.stdout.splitlines() if local_r.ok() else [])
+    local_tags = _local_stable_tags(repo_dir)
 
     for src in sources:
         label = "kernel.org" if src == KERNEL_ORG_GIT else f"'{src}'"
@@ -136,24 +184,36 @@ def _refresh_stable_tags(repo_dir: Path) -> None:
             log.warn(f"tag probe against {label} failed — trying the next source")
             continue
 
-        remote_newest = _newest_stable(
-            line.rsplit("refs/tags/", 1)[-1] for line in probe.stdout.splitlines()
-            if "refs/tags/" in line)
-        if remote_newest <= local_newest:
-            return      # up to date; skip the expensive part entirely
+        remote_tags = [
+            line.rsplit("refs/tags/", 1)[-1].strip() for line in probe.stdout.splitlines()
+            if "refs/tags/" in line]
+        remote_tags = [t for t in remote_tags if _STABLE_TAG_RE.match(t)]
+        missing = _missing_tags(remote_tags, local_tags)
+        if not missing:
+            return remote_tags      # up to date; skip the expensive part entirely
 
+        # Fetch only the releases we lack, one commit each. `fetch --tags` on this
+        # shallow mirror negotiated all ~5,700 tags, blew the 20 s ceiling, was
+        # killed (leaving a tmp_pack_* behind) and the picker silently went stale
+        # (7.2.13, 2026-10-30). One tag at depth 1 is ~36 KiB and about a second.
+        refspecs = [f"refs/tags/{t}:refs/tags/{t}" for t in missing]
         try:
-            run(["git", "-C", str(repo_dir), "fetch", "--tags", "--quiet", src],
-                check=False, force=True, timeout=_TAG_FETCH_TIMEOUT_S, env=net_env)
+            fetch = run(["git", "-C", str(repo_dir), "fetch", "--depth", "1",
+                         "--no-tags", "--quiet", src, *refspecs],
+                        check=False, force=True, timeout=_TAG_FETCH_TIMEOUT_S, env=net_env)
         except subprocess.TimeoutExpired:
             log.warn(f"tag fetch from {label} exceeded {_TAG_FETCH_TIMEOUT_S:.0f}s — "
-                     f"using the mirror's local tags "
-                     f"(v{'.'.join(map(str, remote_newest))} exists upstream but "
-                     f"was not retrieved)")
-        return
+                     f"{missing[0]} exists upstream but "
+                     f"was not retrieved")
+            return remote_tags
+        if not fetch.ok():
+            log.warn(f"tag fetch from {label} failed — trying the next source")
+            continue
+        return remote_tags
 
     log.warn("no tag source reachable — using the mirror's local tags "
              "(a release newer than the last fetch may be missing)")
+    return None
 
 
 def _git_stable_tags(repo_dir: Path, n: int = 3, refresh: bool = True) -> list[str]:
@@ -327,7 +387,8 @@ def _stable_tags_with_dates(repo_dir: Path, n: int = 5) -> list[tuple[str, str]]
     to distinguish "not in that feed" from "git log failed on a tag we have
     locally".
     """
-    tags = _git_stable_tags(repo_dir, n)
+    remote_tags = _refresh_stable_tags(repo_dir) if repo_dir.is_dir() else None
+    tags = _git_stable_tags(repo_dir, n, refresh=False)
     if not tags:
         remote_vers = _ls_remote_stable_tags(n)
         if not remote_vers:
@@ -343,6 +404,14 @@ def _stable_tags_with_dates(repo_dir: Path, n: int = 5) -> list[tuple[str, str]]
                 check=False, force=True)
         date = r.stdout.strip()[:10] if r.ok() and r.stdout.strip() else "unknown"
         out.append((base, date))
+
+    # A release kernel.org advertises but the mirror still lacks (the fetch
+    # failed or timed out) must not vanish from the picker: list it anyway.
+    absent = _missing_tags(remote_tags or [], _local_stable_tags(repo_dir))
+    if absent:
+        dates = _kernel_org_release_dates()
+        extra = [(t.lstrip("v"), dates.get(t.lstrip("v"), "")) for t in absent]
+        out = sorted(extra + out, key=lambda e: _tag_key(e[0]), reverse=True)[:n]
     return out
 
 
@@ -436,10 +505,11 @@ def _nearest_mainline_tag_in_series(tag: str) -> str | None:
     target_ver = _ver(norm)
     not_newer = [t for t in series if _ver(t) <= target_ver]
     candidates = not_newer or series
-    built = [t for t in candidates if _mainline_has_amd64_build(t)]
-    if not built:
-        return None
-    return max(built, key=_ver)
+    # Newest first, stop at the first build: one HTTP probe instead of one per tag.
+    for t in sorted(candidates, key=_ver, reverse=True):
+        if _mainline_has_amd64_build(t):
+            return t
+    return None
 
 
 def _fetch_mainline_baseline_config(
@@ -729,8 +799,8 @@ def _fetch_kernel_org(ctx, target: str) -> Path:
             fallback = _nearest_mainline_tag_in_series(tag)
             if fallback:
                 log.info(
-                    f"kernel.ubuntu.com/mainline has no amd64 build for {tag} — "
-                    f"will use {fallback}'s Canonical baseline config instead (same series)"
+                    f"kernel.ubuntu.com/mainline stops at {fallback} (no amd64 build for {tag}) — "
+                    f"using {fallback}'s Canonical .config as the same-series baseline (expected)"
                 )
             else:
                 latest = _latest_mainline_stable()
@@ -762,7 +832,9 @@ def _fetch_kernel_org(ctx, target: str) -> Path:
         # needs (a single pristine baseline commit) — the archive export
         # itself never needs to be a git clone with history.
         log.info(f"exporting {tag} from local github/kernelorg mirror (no network needed)")
+        log.info(f"extracting {tag} source (~1.4 GB, about a minute, no output until done — don't Ctrl-C)")
         dest.mkdir(parents=True, exist_ok=True)
+        t_extract = time.monotonic()
         r = run(
             f"git -C {shlex.quote(str(local_mirror))} archive {shlex.quote(tag)} "
             f"| tar -x -C {shlex.quote(str(dest))}",
@@ -770,6 +842,7 @@ def _fetch_kernel_org(ctx, target: str) -> Path:
         )
         if not r.ok():
             raise RuntimeError(f"git archive of kernel source @ {tag} from local mirror failed")
+        log.ok(f"extracted {tag} in {time.monotonic() - t_extract:.0f}s")
     else:
         log.info(f"no local kernelorg mirror — shallow-cloning from kernel.org stable")
         r = run(
@@ -1141,7 +1214,7 @@ def run_phase(ctx) -> Path:
 
 
 def _run_phase_impl(ctx) -> Path:
-    log.banner("Phase 2/9 — Fetch kernel source")
+    log.banner("Phase 2/12 — Fetch kernel source")
     target = getattr(ctx.args, "target", None)  # e.g. "7.0.0-16-generic" or None
 
     source_mode = getattr(ctx, "source_mode", "ubuntu")

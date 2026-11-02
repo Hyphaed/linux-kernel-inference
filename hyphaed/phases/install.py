@@ -305,7 +305,7 @@ def _verify_or_repair_initramfs(kver: str) -> None:
 
 
 def run_phase(ctx) -> None:
-    log.banner("Phase 8/9 — Install .deb + GRUB")
+    log.banner("Phase 8/12 — Install .deb + GRUB")
     profile = ctx.profile
 
     # Secure Boot preflight

@@ -89,6 +89,7 @@ class HardwareProfile:
     chassis: str = "unknown"             # laptop | desktop | unknown
     hostname: str = ""
     machine_id: str = ""                 # first 8 hex of /etc/machine-id
+    board: str = ""                      # DMI "<board_vendor> <board_name>", e.g. "ASRock B760M-ITX/D4 WiFi"
 
     def tag(self) -> str:
         # e.g. "rptr-nvbw-wl" or "strx-nvbw-wl"
@@ -446,6 +447,19 @@ def _detect_chassis(profile: HardwareProfile) -> None:
         profile.chassis = "unknown"
 
 
+def _detect_board(profile: HardwareProfile) -> None:
+    """DMI motherboard id. World-readable, survives an OS reinstall (unlike
+    /etc/machine-id), and tells two Raptor Lake boxes apart, which the CPU
+    codename can't. Empty when DMI is unavailable (some VMs)."""
+    parts = []
+    for name in ("board_vendor", "board_name"):
+        try:
+            parts.append(Path(f"/sys/class/dmi/id/{name}").read_text().strip())
+        except OSError:
+            return
+    profile.board = " ".join(x for x in parts if x)
+
+
 def _detect_misc(profile: HardwareProfile) -> None:
     profile.running_kernel = _cmd_out(["uname", "-r"]).strip()
     if Path("/etc/os-release").exists():
@@ -476,5 +490,6 @@ def detect() -> HardwareProfile:
     _detect_boot_free(p)
     _detect_misc(p)
     _detect_chassis(p)
+    _detect_board(p)
     p.build_metadata = p.tag()
     return p

@@ -258,8 +258,14 @@ def _check_nvidia_driver(profile) -> None:
     if profile.gpu_vendor != "nvidia":
         return
     from ..util.run import run
-    r = run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], check=False, force=True)
-    ver = r.stdout.strip().splitlines()[0] if r.ok() and r.stdout.strip() else None
+    ver = None
+    # driver_version is deprecated (removed in CUDA 14.0); older drivers lack kmd_version.
+    for field in ("kmd_version", "driver_version"):
+        r = run(["nvidia-smi", f"--query-gpu={field}", "--format=csv,noheader"], check=False, force=True)
+        out = r.stdout.strip().splitlines()[0].strip() if r.ok() and r.stdout.strip() else ""
+        if out[:1].isdigit():
+            ver = out
+            break
     if not ver:
         log.warn("nvidia-smi failed — can't check driver version compatibility")
         return
@@ -284,7 +290,7 @@ def _check_nvidia_driver(profile) -> None:
 
 
 def run_phase(ctx) -> HardwareProfile:
-    log.banner("Phase 1/9 — Detect hardware & environment")
+    log.banner("Phase 1/12 — Detect hardware & environment")
     _ensure_build_deps(ctx)
     profile = topology_detect()
 

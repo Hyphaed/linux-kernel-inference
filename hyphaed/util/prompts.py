@@ -19,6 +19,10 @@ def set_mode(non_interactive: bool, assume_yes: bool) -> None:
     _ASSUME_YES = assume_yes
 
 
+def is_assume_yes() -> bool:
+    return _ASSUME_YES
+
+
 def is_non_interactive() -> bool:
     return _NON_INTERACTIVE
 

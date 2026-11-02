@@ -1,4 +1,4 @@
-from . import detect, source, patch, configure, security, build, package, install, postinstall
+from . import detect, source, patch, configure, security, build, package, install, postinstall, nvidia, desktop, proton
 
 ORDER = [
     "detect",
@@ -10,6 +10,9 @@ ORDER = [
     "package",
     "install",
     "postinstall",
+    "nvidia",
+    "desktop",
+    "proton",
 ]
 
 MODULES = {
@@ -21,5 +24,8 @@ MODULES = {
     "build": build,
     "package": package,
     "install": install,
+    "nvidia": nvidia,
+    "desktop": desktop,
+    "proton": proton,
     "postinstall": postinstall,
 }

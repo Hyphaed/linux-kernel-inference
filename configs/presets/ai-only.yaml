@@ -21,10 +21,12 @@ fragments:
   - 32-mm-damon.config
   - 40-iommu-vfio.config
   - 42-io-uring-bpf.config
+  - 44-block-iosched.config
   - 60-nvidia-wayland.config
   - 61-no-amdgpu-no-nouveau.config
   - 80-raptorlake-intel.config
   - 81-native-cpu-opt.config
+  - 85-ncore-board-trim.config   # bound to the ncore motherboard (requires-board); skipped on any other machine
   - 70-greenboost-required.config
 
 cmdline_extra:

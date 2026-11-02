@@ -8,7 +8,7 @@ from pathlib import Path
 from rich.markup import escape
 from ..util import log
 from ..util.run import run
-from ..util.prompts import confirm, select
+from ..util.prompts import confirm, select, is_assume_yes
 from ..util.checksum import sha256_file
 from .. import kconfig
 
@@ -197,6 +197,26 @@ def _write_machine_topology_fragment(ctx) -> Path | None:
     return out
 
 
+_REQUIRES_BOARD = re.compile(r"^#\s*requires-board:\s*(.+?)\s*$")
+
+
+def _required_board(fragment: Path) -> str | None:
+    """`# requires-board: <DMI vendor> <name>` in a fragment's leading comment
+    block binds it to one motherboard (ADR-011). Hardware-removal fragments
+    must carry it: any other box that runs this wizard would lose drivers it
+    needs. None means the fragment is not board-bound."""
+    try:
+        for line in fragment.read_text().splitlines():
+            if line.strip() and not line.startswith("#"):
+                break
+            m = _REQUIRES_BOARD.match(line)
+            if m:
+                return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
 def _select_fragments(ctx, generated: Path | None = None) -> list[Path]:
     """Pick the fragments this machine gets. PURE — it writes nothing.
 
@@ -271,6 +291,16 @@ def _select_fragments(ctx, generated: Path | None = None) -> list[Path]:
         if "laptop" in tokens and getattr(profile, "chassis", "unknown") != "laptop":
             log.info(f"skipping {name}: chassis is not laptop")
             continue
+        required_board = _required_board(f)
+        if required_board is not None:
+            have = getattr(profile, "board", "")
+            if not have:
+                log.warn(f"skipping {name}: motherboard unknown (re-run the detect phase); "
+                         f"it is bound to '{required_board}'")
+                continue
+            if have.casefold() != required_board.casefold():
+                log.info(f"skipping {name}: bound to board '{required_board}', this is '{have}'")
+                continue
         selected.append(f)
 
     # Machine-derived symbols (CPU_SUP_*, NR_CPUS) — see the docstring on
@@ -342,7 +372,7 @@ def _resolve_base_config(ctx) -> Path:
 
 
 def run_phase(ctx) -> Path:
-    log.banner("Phase 4/9 — Configure (.config layering)")
+    log.banner("Phase 4/12 — Configure (.config layering)")
     src = ctx.source_dir
     if src is None:
         log.err("no source_dir in context; run `source` phase first")
@@ -365,6 +395,11 @@ def run_phase(ctx) -> Path:
         shutil.copy2(base_config, target_config)
         log.info(f"seeded .config from {base_config.name}")
 
+    # A profile saved before `board` existed (or by `--phase configure` alone) has no
+    # board; the DMI read is cheap and per-machine state is keyed by host, so refresh it.
+    if not getattr(ctx.profile, "board", ""):
+        from .. import topology
+        topology._detect_board(ctx.profile)
     fragments = _select_fragments(ctx, generated=_write_machine_topology_fragment(ctx))
     log.info(f"layering {len(fragments)} fragments:")
     for f in fragments:
@@ -430,7 +465,9 @@ def run_phase(ctx) -> Path:
     # tty before even offering the prompt, independent of the interactive
     # flags, since this is the one confirm() site that launches a blocking
     # full-screen program rather than just returning a bool.
-    if not ctx.dry_run and not ctx.non_interactive and sys.stdin.isatty():
+    # -y means unattended (make bump): never auto-answer "yes" to a full-screen editor
+    # (found 2026-10-31: `make bump` opened menuconfig on its own).
+    if not ctx.dry_run and not ctx.non_interactive and not is_assume_yes() and sys.stdin.isatty():
         if confirm("open menuconfig to review before build?", default=False):
             run(["make", "menuconfig"], cwd=src, capture=False)
 

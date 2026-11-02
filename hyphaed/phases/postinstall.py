@@ -413,7 +413,7 @@ def _check_dgx_parity_basics() -> None:
 
 
 def run_phase(ctx) -> None:
-    log.banner("Phase 9/9 — DKMS rebuild & smoke checks")
+    log.banner("Phase 9/12 — DKMS rebuild & smoke checks")
     kver = _hyphaed_kernel_ver(ctx)
     log.info(f"target kernel for DKMS: {kver}")
 

@@ -172,6 +172,21 @@ def test_nearest_in_series_picks_newest_built_at_or_below_target(monkeypatch):
     assert _nearest_mainline_tag_in_series("v7.1.6") == "v7.1.5"
 
 
+def test_nearest_in_series_probes_newest_first_and_stops(monkeypatch):
+    """7.2.13 asked for six serial curls (v7.2.1..v7.2.6) to find v7.2.6."""
+    import hyphaed.phases.source as src_mod
+    from hyphaed.phases.source import _nearest_mainline_tag_in_series
+
+    probed = []
+    monkeypatch.setattr(src_mod, "_mainline_available_tags",
+                         lambda: [f"v7.2.{i}" for i in range(1, 7)])
+    monkeypatch.setattr(src_mod, "_mainline_has_amd64_build",
+                         lambda t: probed.append(t) or True)
+
+    assert _nearest_mainline_tag_in_series("v7.2.13") == "v7.2.6"
+    assert probed == ["v7.2.6"]
+
+
 def test_nearest_in_series_excludes_rc_tags(monkeypatch):
     import hyphaed.phases.source as src_mod
     from hyphaed.phases.source import _nearest_mainline_tag_in_series

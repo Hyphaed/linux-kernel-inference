@@ -170,9 +170,10 @@ _detect_boot_free_mb() {
 }
 
 # ── State helpers ─────────────────────────────────────────────────────────────
-STATE_FILE="$REPO_ROOT/state/ctx.json"
+STATE_FILE="$REPO_ROOT/state/machines/$(hostname)/ctx.json"
+[[ -f "$STATE_FILE" ]] || STATE_FILE="$REPO_ROOT/state/ctx.json"
 
-PHASES=(detect source patch configure security build package install postinstall)
+PHASES=(detect source patch configure security build package install postinstall nvidia desktop proton)
 
 _phase_index() {
     local p="$1" i
@@ -190,6 +191,82 @@ _phases_from() {
         (( i >= idx )) && result+=("${PHASES[$i]}")
     done
     printf '%s\n' "${result[@]}"
+}
+
+
+# ── Stops: what the client does, in order ─────────────────────────────────────
+# Kernel stages run in one go. The NVIDIA driver and the GNOME rebuild are separate
+# stops that only make sense AFTER a reboot (driver) / inside the desktop (GNOME),
+# so the full build never runs them by itself; menu 7 and 8 do.
+KERNEL_PHASES=(detect source patch configure security build package install postinstall)
+POST_PHASES=(nvidia desktop proton)
+
+_completed() {
+    python3 - "$STATE_FILE" <<'EOF' 2>/dev/null || true
+import json, sys
+try:
+    print(" ".join(json.load(open(sys.argv[1])).get("phases_completed", [])))
+except Exception:
+    pass
+EOF
+}
+_newest_kernel() { ls /boot/vmlinuz-*-hyphaed 2>/dev/null | sed 's#.*/vmlinuz-##' | sort -V | tail -1; }
+_nvidia_pinned() {
+    sed -n '/^nvidia:/,/^[a-z]/{s/^  version: *"\{0,1\}\([0-9.]*\)"\{0,1\}.*/\1/p}' \
+        "$REPO_ROOT/configs/presets/${PRESET:-gaming-ai-vm}.yaml" 2>/dev/null | head -1
+}
+_nvidia_loaded() { grep -o '[0-9]\{3\}\.[0-9]\{2,3\}\.[0-9]\{2\}' /proc/driver/nvidia/version 2>/dev/null | head -1; }
+
+_stop() {   # state(done|next|todo)  number  title  hint-lines...
+    local st="$1" n="$2" title="$3" mark color
+    shift 3
+    case "$st" in
+        done) mark="✓"; color="$C_LIME"  ;;
+        next) mark="►"; color="$C_AMBER" ;;
+        *)    mark="○"; color="$C_DIM"   ;;
+    esac
+    printf "  %s%s%s  %s%s.%s %s%s%s\n" "$color" "$mark" "$C_RESET" "$C_CYAN" "$n" "$C_RESET" "$C_WHITE" "$title" "$C_RESET"
+    local h
+    for h in "$@"; do printf "        %s%s%s\n" "$C_DIM" "$h" "$C_RESET"; done
+}
+
+screen_roadmap() {
+    local done_p newest running pinned loaded
+    done_p=" $(_completed) "; newest=$(_newest_kernel); running=$(uname -r)
+    pinned=$(_nvidia_pinned); loaded=$(_nvidia_loaded)
+    local -a st=(todo todo todo todo todo todo)
+    [[ "$done_p" == *" install "* ]]                         && st[0]=done
+    [[ "${st[0]}" == done && "$running" == "$newest" ]]      && st[1]=done
+    if [[ -n "$pinned" ]]; then
+        [[ "$done_p" == *" nvidia "* || "$loaded" == "$pinned" ]] && st[2]=done
+        [[ "$loaded" == "$pinned" ]]                         && st[3]=done
+    else
+        st[2]=done; st[3]=done
+    fi
+    [[ "$done_p" == *" desktop "* ]]                         && st[4]=done
+    [[ "$done_p" == *" proton "* ]]                          && st[5]=done
+    local i; for i in 0 1 2 3 4 5; do [[ "${st[$i]}" != done ]] && { st[$i]=next; break; }; done
+
+    sep_label "Stops to follow (in this order)"
+    _stop "${st[0]}" 1 "Build and install the kernel   [menu 1]" \
+        "About 40 minutes. Installs ${newest:-the new kernel} next to your current one; nothing else changes."
+    _stop "${st[1]}" 2 "Reboot into the new kernel" \
+        "Pick ${newest:-the new kernel} in GRUB (it is the default), then open this wizard again."
+    if [[ -n "$pinned" ]]; then
+        _stop "${st[2]}" 3 "NVIDIA driver ${pinned}, built for this CPU   [menu 7]" \
+            "Builds, then asks to install. Installing before the reboot works but nvidia-smi shows a mismatch until you reboot." \
+            "Install replaces the apt driver with ours and asks first; undo: sudo bash diagnostics/nvidia-restore-apt.sh" \
+            "Stop GPU jobs first (CUDA, llama-server, ComfyUI). Desktop apps are fine."
+        _stop "${st[3]}" 4 "Reboot to load the new driver" \
+            "Until you do, new OpenGL/Vulkan windows can fail to open. Reboot right after step 3."
+    fi
+    _stop "${st[4]}" 5 "GNOME Shell + Mutter rebuild   [menu 8]" \
+        "Run it inside your GNOME session. 30 to 60 minutes of building, asks before installing." \
+        "Takes effect when you log out and in. Undo list: state/machines/$(hostname)/desktop-rollback.txt"
+    _stop "${st[5]}" 6 "Proton: GreenBoost wrapper + newest-source rebuild   [menu 9]" \
+        "Refreshes the GreenBoost wrapper, then fetches the newest Valve Proton, re-applies our patches, builds in Docker (1+ hour, 25 GB)." \
+        "Saves what changed upstream (state/machines/<host>/proton-changes-*.md). Asks before the build and before installing."
+    printf "\n"
 }
 
 # ── Screen: welcome ───────────────────────────────────────────────────────────
@@ -210,7 +287,7 @@ screen_welcome() {
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
-    order = ["detect", "source", "patch", "configure", "security", "build", "package", "install", "postinstall"]
+    order = ["detect", "source", "patch", "configure", "security", "build", "package", "install", "postinstall", "nvidia", "desktop", "proton"]
     completed = set(d.get('phases_completed', []))
     v = ''
     for p in order:
@@ -226,13 +303,18 @@ EOF
         printf "\n"
     fi
 
+    screen_roadmap
+
     sep_label "Mode"
-    menu_item 1 "Full build"           "detect → source → … → postinstall"
+    menu_item 1 "Full build"           "kernel only: detect → … → install → postinstall (steps 1)"
     menu_item 2 "Resume"               "continue from last checkpoint"
     menu_item 3 "Single phase"         "run exactly one phase"
     menu_item 4 "Fetch patches only"   "python3 -m hyphaed fetch-patches"
     menu_item 5 "Checks & diagnostics" "verify · status · tune · doctor · security scan · deps — no kernel build"
     menu_item 6 "Harden workstation"   "firewall · fail2ban · rootkit scanners · unattended updates · DNSCrypt · WAN exposure"
+    menu_item 7 "NVIDIA driver"        "stop 3: after rebooting into the new kernel (optimized module + matching userspace)"
+    menu_item 8 "GNOME Shell + Mutter" "stop 5: optimized rebuild, run it inside your GNOME session"
+    menu_item 9 "GreenBoost Proton"    "stop 6: refresh GreenBoost Proton, then rebuild proton-gb-nr from the newest Valve sources (1+ hour, 25 GB)"
     menu_item 0 "Quit"                 ""
     printf "\n"
 
@@ -245,8 +327,11 @@ EOF
             4) MODE="fetch";  return ;;
             5) MODE="checks"; return ;;
             6) MODE="harden"; return ;;
+            7) MODE="nvidia"; return ;;
+            8) MODE="desktop"; return ;;
+            9) MODE="proton"; return ;;
             0) printf "\n"; exit 0 ;;
-            *) warn "Enter 0–6" ;;
+            *) warn "Enter 0–9" ;;
         esac
     done
 }
@@ -352,7 +437,12 @@ screen_single_phase() {
 
     local i
     for i in "${!PHASES[@]}"; do
-        menu_item "$(( i + 1 ))" "${PHASES[$i]}" ""
+        case "${PHASES[$i]}" in
+            nvidia)  menu_item "$(( i + 1 ))" "nvidia"  "after rebooting into the new kernel" ;;
+            desktop) menu_item "$(( i + 1 ))" "desktop" "inside your GNOME session" ;;
+            proton)  menu_item "$(( i + 1 ))" "proton"  "fetch newest Proton sources + rebuild proton-gb-nr" ;;
+            *)       menu_item "$(( i + 1 ))" "${PHASES[$i]}" "" ;;
+        esac
     done
     menu_item 0 "Back" ""
     printf "\n"
@@ -457,7 +547,8 @@ run_phase() {
     start=$(date +%s)
 
     if [[ "$phase" == "build" || "$phase" == "install" || "$phase" == "detect" \
-          || "$phase" == "source" || "$phase" == "patch" || "$phase" == "configure" ]]; then
+          || "$phase" == "source" || "$phase" == "patch" || "$phase" == "configure" \
+          || "$phase" == "nvidia" || "$phase" == "desktop" || "$phase" == "proton" ]]; then
         # build: raw output because it's long-running and user wants progress.
         # install: raw output because install.py has an unbypassable "hard"
         # confirm before dpkg -i + GRUB changes.
@@ -659,7 +750,7 @@ screen_checks() {
                 ;;
             8) _run_check "Check build deps"     python3 -m hyphaed check-deps || true ;;
             0) return ;;
-            *) warn "Enter 0–8" ;;
+            *) warn "Enter 0–9" ;;
         esac
     done
 }
@@ -729,14 +820,77 @@ screen_done() {
     ok "All phases finished"
     printf "\n"
 
-    sep_label "Next Steps"
-    note "1.  Reboot and select hyphaed from GRUB"
-    note "2.  python3 -m hyphaed status"
-    note "3.  nvidia-smi  /  vmware-modconfig --console --install-all"
-    note "4.  cat /sys/class/greenboost/greenboost/status"
+    screen_roadmap
+    sep_label "After the reboot, quick checks"
+    note "python3 -m hyphaed status   ·   nvidia-smi   ·   cat /sys/class/greenboost/greenboost/status"
     printf "\n"
     note "Rollback: reboot and pick -generic from GRUB"
     printf "\n"
+    sep
+    printf "\n"
+}
+
+
+# ── Screen: one post-reboot stop (menu 7 / 8) ─────────────────────────────────
+screen_stage_intro() {
+    local stage="$1" newest running
+    newest=$(_newest_kernel); running=$(uname -r)
+    clear
+    print_header
+    screen_roadmap
+    if [[ "$stage" == "proton" ]]; then
+        sep_label "Proton: what this does"
+        note "1. Refreshes the GreenBoost Proton wrapper (it follows Valve's Proton at launch); asks first, warns about uncommitted edits."
+        note "2. Fetches the newest Valve Proton (bleeding-edge), saves what changed since our last build, re-applies our patches."
+        note "3. Builds proton-gb-nr in Valve's Docker SDK image with all cores: 1+ hour, 25 GB. Asks before starting and before installing."
+        note "4. Records the kernel + Proton pair (ADR-011). Do not run it while a kernel build is going."
+        printf "\n"
+        local free_gb; free_gb=$(df -Pk "$HOME/Dev/github_gaming" | awk 'NR==2{print int($4/1048576)}')
+        (( free_gb < 45 )) && { warn "Only ${free_gb} GB free; need 45. Free space first: sudo bash scripts/clean-space.sh --go"; printf "\n"; exit 0; }
+    elif [[ "$stage" == "nvidia" ]]; then
+        sep_label "NVIDIA driver: what this does"
+        note "1. Builds the NVIDIA open modules for $newest with this CPU's flags (nothing installed; works before the reboot)."
+        note "2. Asks you to confirm, removes the apt NVIDIA 615.71.09 packages, installs the new userspace and modules."
+        note "3. Installs our modules; they load at the next boot. Rollback: sudo bash diagnostics/nvidia-restore-apt.sh"
+        printf "\n"
+        if [[ "$running" != "$newest" ]]; then
+            info "You are running $running; the new kernel is $newest."
+            info "It builds for $newest, then asks to install. Until you reboot, nvidia-smi and new GL windows can fail (version mismatch). Reboot right after."
+            printf "\n"
+        fi
+        if [[ -n "$(nvidia-smi --query-compute-apps=process_name --format=csv,noheader 2>/dev/null | grep -Ev 'gnome|gjs|nautilus|Xwayland|firefox|chrome|steam|code|ptyxis|kitty' || true)" ]]; then
+            warn "GPU compute jobs are running. Stop them first (the step will refuse to continue otherwise)."
+        fi
+    else
+        sep_label "GNOME Shell + Mutter: what this does"
+        note "1. Records a 2 minute baseline of the stock packages (CPU, memory, GPU)."
+        note "2. Rebuilds mutter and gnome-shell for this CPU, with Ubuntu's own patches kept."
+        note "3. Asks you to confirm, installs them and holds the versions. Active after you log out and in."
+        note "4. Afterwards: bash scripts/measure_desktop.sh <out.json>, and --compare against the baseline."
+        printf "\n"
+        if ! pgrep -u "$USER" -x gnome-shell >/dev/null 2>&1; then
+            warn "No GNOME Shell session found for $USER. Run this from a terminal inside your desktop."
+            printf "\n"; exit 0
+        fi
+    fi
+    while true; do
+        prompt_choice "Start? [y / n]"
+        case "${REPLY,,}" in
+            y|yes) return ;;
+            n|no|"") printf "\n"; exit 0 ;;
+            *) warn "y · n" ;;
+        esac
+    done
+}
+
+screen_stage_done() {
+    clear
+    print_header
+    sep_label "Complete"
+    printf "\n"
+    ok "$1 finished"
+    printf "\n"
+    screen_roadmap
     sep
     printf "\n"
 }
@@ -763,6 +917,15 @@ main() {
         exit 0
     fi
 
+    if [[ "$MODE" == "nvidia" || "$MODE" == "desktop" || "$MODE" == "proton" ]]; then
+        TARGET="$(uname -r | cut -d- -f1)"
+        screen_stage_intro "$MODE"
+        PLAN_PHASES="$MODE"
+        screen_execute
+        screen_stage_done "$MODE"
+        exit 0
+    fi
+
     screen_source_mode
 
     if [[ "$MODE" == "single" ]]; then
@@ -775,7 +938,7 @@ main() {
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
-    order = ["detect", "source", "patch", "configure", "security", "build", "package", "install", "postinstall"]
+    order = ["detect", "source", "patch", "configure", "security", "build", "package", "install", "postinstall", "nvidia", "desktop", "proton"]
     completed = set(d.get('phases_completed', []))
     v = ''
     for p in order:
@@ -797,12 +960,17 @@ EOF
                 exit 0
             fi
             local next="${PHASES[$(( idx + 1 ))]}"
-            PLAN_PHASES="$(_phases_from "$next")"
+            PLAN_PHASES="$(_phases_from "$next" | grep -vxE 'nvidia|desktop|proton' || true)"
+            if [[ -z "$PLAN_PHASES" ]]; then
+                info "Kernel stages are complete."
+                screen_roadmap
+                exit 0
+            fi
             info "Resuming from: ${C_WHITE}${next}${C_RESET}"
         fi
 
     else
-        PLAN_PHASES="$(printf '%s\n' "${PHASES[@]}")"
+        PLAN_PHASES="$(printf '%s\n' "${KERNEL_PHASES[@]}")"
     fi
 
     screen_confirm

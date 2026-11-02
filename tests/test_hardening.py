@@ -74,19 +74,52 @@ def test_ufw_status_reports_pending_root_when_no_log_evidence_either(monkeypatch
     assert "sudo" in detail.lower()
 
 
-def test_ssh_rate_limit_detects_limit_rule(monkeypatch):
-    monkeypatch.setattr(H, "_ufw_status", lambda **k: "22/tcp                     LIMIT       Anywhere\n")
-    monkeypatch.setattr(H.shutil, "which", lambda name: "/usr/sbin/ufw" if name == "ufw" else None)
-    ok, _ = H._check_ssh_rate_limited()
-    assert ok is True
+def test_ufw_ssh_rules_match_port_22_only():
+    rules = ("22/tcp                     LIMIT       Anywhere\n"
+             "22/tcp (v6)                LIMIT       Anywhere (v6)\n"
+             "2222/tcp                   ALLOW       Anywhere\n"
+             "47989/tcp                  ALLOW       192.168.50.0/24\n"
+             "22000/tcp                  ALLOW       Anywhere\n")
+    assert len(H._ufw_ssh_rules(rules)) == 2
 
 
-def test_ssh_rate_limit_flags_unlimited_allow(monkeypatch):
-    monkeypatch.setattr(H, "_ufw_status", lambda **k: "22/tcp                     ALLOW       Anywhere\n")
-    monkeypatch.setattr(H.shutil, "which", lambda name: "/usr/sbin/ufw" if name == "ufw" else None)
-    ok, detail = H._check_ssh_rate_limited()
-    assert ok is False
-    assert "aren't throttled" in detail
+def test_inbound_ssh_is_open_while_the_server_listens(monkeypatch):
+    monkeypatch.setattr(H, "_cmd", lambda args: "LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\n")
+    monkeypatch.setattr(H, "_ufw_status", lambda **k: "")
+    ok, detail = H._check_ssh_inbound_closed()
+    assert not ok and "listening on port 22" in detail
+
+
+def test_inbound_ssh_is_open_while_ufw_lets_22_in(monkeypatch):
+    monkeypatch.setattr(H, "_cmd", lambda args: "")
+    monkeypatch.setattr(H, "_ufw_status", lambda **k: "22/tcp   LIMIT   Anywhere\n")
+    monkeypatch.setattr(H.shutil, "which", lambda n: "/usr/sbin/ufw")
+    ok, detail = H._check_ssh_inbound_closed()
+    assert not ok and "letting 22 in" in detail
+
+
+def test_inbound_ssh_is_closed_when_nothing_listens_and_no_rule(monkeypatch):
+    monkeypatch.setattr(H, "_cmd", lambda args: "")
+    monkeypatch.setattr(H, "_ufw_status", lambda **k: "47989/tcp ALLOW 192.168.50.0/24\n")
+    monkeypatch.setattr(H.shutil, "which", lambda n: "/usr/sbin/ufw")
+    assert H._check_ssh_inbound_closed()[0] is True
+
+
+def test_closing_ssh_stops_the_server_and_never_reopens_the_port(monkeypatch):
+    calls = []
+    monkeypatch.setattr(H, "run_sudo", lambda cmd, **kw: calls.append(list(cmd)))
+    monkeypatch.setattr(H, "_read", lambda path: "")
+    H._apply_ssh_inbound_closed()
+    flat = [" ".join(c) for c in calls]
+    assert any(c.startswith("systemctl disable --now ssh.socket ssh.service") for c in flat)
+    assert any(c == "ufw delete limit 22/tcp" for c in flat)
+    assert not any(c.startswith(("ufw allow", "ufw limit")) for c in flat)     # the old item's fix, now forbidden
+
+
+def test_forced_command_keys_are_named_so_apply_can_warn():
+    forced = 'command="/usr/local/bin/fastcopy-serve",restrict ssh-ed25519 AAAAC3Nza macos-guest-fastcopy'
+    plain = "ssh-ed25519 AAAAC3NzaOther laptop-key"
+    assert H._forced_command_keys("# note\n" + forced + "\n" + plain) == ["macos-guest-fastcopy"]
 
 
 def test_wan_exposed_services_flags_wildcard_binds_only():
@@ -127,6 +160,23 @@ def test_fail2ban_apply_installs_and_configures_an_sshd_jail():
     assert "fail2ban" in body
     assert "jail.d/sshd.local" in body
     assert "systemctl" in body and "enable" in body
+
+
+def test_crowdsec_needs_the_bouncer_not_just_the_agent(monkeypatch):
+    """2026-10-28: agent active, bouncer absent, nothing blocked. Agent alone
+    must not read as healthy."""
+    states = {"crowdsec": "active", "crowdsec-firewall-bouncer": "inactive"}
+    monkeypatch.setattr(H, "_cmd", lambda args: states[args[-1]])
+    ok, detail = H._check_crowdsec()
+    assert not ok and "crowdsec-firewall-bouncer: inactive" in detail
+    states["crowdsec-firewall-bouncer"] = "active"
+    assert H._check_crowdsec()[0]
+
+
+def test_crowdsec_installer_hooks_forward_for_docker():
+    script = (REPO / "diagnostics" / "install-crowdsec.sh").read_text()
+    assert "forward" in script and "CROWDSEC_CTI_KEY" in script
+    assert "chmod 600" in script
 
 
 class _FakeCompleted:

@@ -19,6 +19,7 @@ fragments:
   - 41-kvm-nested.config
   - 42-io-uring-bpf.config
   - 43-ntsync.config
+  - 44-block-iosched.config
   - 50-net-bbr-fq.config
   - 60-nvidia-wayland.config
   - 62-nouveau-off.config

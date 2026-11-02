@@ -78,7 +78,7 @@ def _kxdb_snapshot(ctx, vmlinux: Path) -> None:
 
 
 def run_phase(ctx) -> Path:
-    log.banner("Phase 7/9 — Collect packages + manifest + kxdb snapshot")
+    log.banner("Phase 7/12 — Collect packages + manifest + kxdb snapshot")
     # dict.fromkeys preserves order while dropping duplicate paths — a
     # duplicate would otherwise crash here (move, then unlink-on-move of an
     # already-moved file) rather than just produce a redundant manifest entry.

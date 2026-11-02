@@ -105,6 +105,49 @@ def test_refresh_does_fetch_when_upstream_is_ahead(monkeypatch):
     monkeypatch.setattr(S, "run", fake)
     S._refresh_stable_tags(Path("/nonexistent"))
     assert fake.fetched(), "upstream had v7.2 and no fetch was issued"
+    call = fake.fetched()[0]
+    assert "--depth" in call and "--no-tags" in call
+    assert "--tags" not in call, "a bare --tags fetch negotiates ~5,700 tags and times out"
+    assert "refs/tags/v7.2:refs/tags/v7.2" in call
+
+
+def test_refresh_fetches_only_the_tags_newer_than_local(monkeypatch):
+    """7.2.13 never reached the picker because the fetch asked for every tag."""
+    fake = _FakeRun(["v7.1.8", "v7.1.9", "v7.1.10"], ["v7.1.9", "v7.1.8"])
+    monkeypatch.setattr(S, "run", fake)
+    S._refresh_stable_tags(Path("/nonexistent"))
+    refspecs = [a for a in fake.fetched()[0] if a.startswith("refs/tags/")]
+    assert refspecs == ["refs/tags/v7.1.10:refs/tags/v7.1.10"]
+
+
+def test_a_point_release_is_fetched_even_when_mainline_is_newer(monkeypatch):
+    """The real 7.2.13 miss: the mirror held v7.3, so v7.2.13 was never
+    'newer than the newest local tag' and no fetch was ever issued."""
+    fake = _FakeRun(["v7.2.12", "v7.2.13", "v7.3"], ["v7.3", "v7.2.12", "v7.2.11"])
+    monkeypatch.setattr(S, "run", fake)
+    S._refresh_stable_tags(Path("/nonexistent"))
+    refspecs = [a for a in fake.fetched()[0] if a.startswith("refs/tags/")]
+    assert refspecs == ["refs/tags/v7.2.13:refs/tags/v7.2.13"]
+
+
+def test_a_timed_out_fetch_still_lists_the_new_release(monkeypatch):
+    """If the fetch dies, the picker must still offer what kernel.org advertises."""
+    fake = _FakeRun(["v7.1.9", "v7.1.10"], ["v7.1.9"])
+
+    def run_with_dead_fetch(cmd, **kw):
+        if "fetch" in cmd:
+            raise subprocess.TimeoutExpired(cmd, 20)
+        if "log" in cmd:
+            from hyphaed.util.run import RunResult
+            return RunResult(0, "2026-10-01T00:00:00+00:00", "", "")
+        return fake(cmd, **kw)
+
+    monkeypatch.setattr(S, "run", run_with_dead_fetch)
+    monkeypatch.setattr(S, "_kernel_org_release_dates", lambda: {"7.1.10": "2026-10-26"})
+    monkeypatch.setattr(Path, "is_dir", lambda self: True)
+    entries = S._stable_tags_with_dates(Path("/nonexistent"), n=2)
+    assert entries[0] == ("7.1.10", "2026-10-26")
+    assert entries[1][0] == "7.1.9"
 
 
 def test_newest_stable_ignores_release_candidates():

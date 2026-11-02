@@ -137,28 +137,66 @@ def _apply_ufw_active() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. SSH rate-limited against brute-force
+# 2. Inbound SSH is closed (owner policy, 2026-10-28)
 #
-# `ufw limit 22/tcp` auto-denies an IP making more than 6 connections in 30
-# seconds — the standard, low-cost ufw anti-brute-force primitive. Doesn't
-# require fail2ban to already do something real.
+# Nobody connects to this workstation over SSH. Outbound ssh to other
+# machines is fine and nothing here touches it. This replaces the old "rate
+# limit SSH" item, whose fix (`ufw limit 22/tcp`) opened the very port the
+# policy closes. Before this, ssh.service and ssh.socket were enabled, sshd
+# listened on 0.0.0.0:22 and [::]:22, ufw had `22/tcp LIMIT IN Anywhere`, and
+# password login was on.
+#
+# One thing depends on the server today: the restricted forced-command key in
+# ~/.ssh/authorized_keys (the macOS guest's fastcopy-serve). It can't open a
+# shell, but it does need sshd to fetch files. `apply` says so before it stops
+# the server, because the policy and that guest feature can't both hold.
 # ---------------------------------------------------------------------------
 
-def _check_ssh_rate_limited() -> tuple[bool, str]:
-    if not shutil.which("ufw"):
-        return True, "ufw not installed — n/a"
-    rules = _ufw_status()
-    if not rules.strip():
-        return False, "no cached sudo credential to read the ruleset — run `sudo hyphaed harden report`"
-    if re.search(r"22/tcp\s+LIMIT", rules):
-        return True, "22/tcp is rate-limited"
-    if re.search(r"22/tcp\s+ALLOW", rules):
-        return False, "22/tcp is ALLOWed with no rate limit — brute-force attempts aren't throttled"
-    return True, "22/tcp has no explicit allow rule — default-deny already covers it"
+_KEY_LINE = re.compile(r"^(?P<opts>.*?)\s*(?P<type>(?:ssh-|ecdsa-|sk-)\S+)\s", re.S)
 
 
-def _apply_ssh_rate_limited() -> None:
-    run_sudo(["ufw", "limit", "22/tcp"], check=False)
+def _ssh_listening() -> list[str]:
+    return [l for l in _cmd(["ss", "-tlnH", "sport = :22"]).splitlines() if l.strip()]
+
+
+def _ufw_ssh_rules(rules: str) -> list[str]:
+    """ufw rules that let port 22 in. Anchored so 2222/tcp or 22000 don't match."""
+    return [l.strip() for l in rules.splitlines()
+            if re.match(r"^22(/tcp)?(\s|\()", l.strip()) and re.search(r"\b(ALLOW|LIMIT)\b", l)]
+
+
+def _forced_command_keys(text: str) -> list[str]:
+    """Labels of authorized_keys lines tied to a forced command or `restrict`: keys that
+    don't give a shell but still need the SSH server running."""
+    out = []
+    for line in text.splitlines():
+        line = line.strip()
+        m = _KEY_LINE.match(line + " ") if line and not line.startswith("#") else None
+        if m and ("command=" in m.group("opts") or re.search(r"(^|,)restrict(,|$)", m.group("opts"))):
+            out.append(line.split()[-1])
+    return out
+
+
+def _check_ssh_inbound_closed() -> tuple[bool, str]:
+    rules = _ufw_status() if shutil.which("ufw") else ""
+    problems = []
+    if _ssh_listening():
+        problems.append("the SSH server is listening on port 22")
+    open_rules = _ufw_ssh_rules(rules)
+    if open_rules:
+        problems.append(f"ufw has {len(open_rules)} rule(s) letting 22 in")
+    if problems:
+        return False, "; ".join(problems)
+    note = "" if rules.strip() or not shutil.which("ufw") else " (ufw rules unreadable without a cached sudo credential)"
+    return True, "nothing listens on 22 and ufw has no rule for it" + note
+
+
+def _apply_ssh_inbound_closed() -> None:
+    for label in _forced_command_keys(_read(str(Path.home() / ".ssh" / "authorized_keys"))):
+        log.warn(f"the restricted key '{label}' in ~/.ssh/authorized_keys needs the SSH server and will stop working")
+    run_sudo(["systemctl", "disable", "--now", "ssh.socket", "ssh.service"], check=False)
+    for verb in ("limit", "allow"):
+        run_sudo(["ufw", "delete", verb, "22/tcp"], check=False)
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +229,26 @@ def _apply_fail2ban() -> None:
     run_sudo(["mkdir", "-p", "/etc/fail2ban/jail.d"])
     run_sudo(["tee", "/etc/fail2ban/jail.d/sshd.local"], input_str=jail_local, capture=True)
     run_sudo(["systemctl", "enable", "--now", "fail2ban"])
+
+
+# ---------------------------------------------------------------------------
+# 3b. CrowdSec: the agent only detects. Found 2026-10-28 with the agent active
+#     and no bouncer installed, so nothing was ever dropped.
+# ---------------------------------------------------------------------------
+
+def _check_crowdsec() -> tuple[bool, str]:
+    states = {
+        unit: _cmd(["systemctl", "is-active", unit]).strip() or "?"
+        for unit in ("crowdsec", "crowdsec-firewall-bouncer")
+    }
+    if all(s == "active" for s in states.values()):
+        return True, "agent + nftables bouncer active"
+    return False, ", ".join(f"{u}: {s}" for u, s in states.items())
+
+
+def _apply_crowdsec() -> None:
+    script = Path(__file__).resolve().parent.parent / "diagnostics" / "install-crowdsec.sh"
+    run_sudo(["bash", str(script)])
 
 
 # ---------------------------------------------------------------------------
@@ -403,14 +461,19 @@ ITEMS: list[HardenItem] = [
         _check_ufw_active, _apply_ufw_active, needs_root=True,
     ),
     HardenItem(
-        "ufw: SSH rate-limited",
-        "standard low-cost ufw anti-brute-force primitive (>6 conns/30s auto-denied)",
-        _check_ssh_rate_limited, _apply_ssh_rate_limited, needs_root=True,
+        "SSH: inbound closed (owner policy)",
+        "nobody connects in over SSH, outbound ssh stays fine; before this the server listened on 22 with password login on",
+        _check_ssh_inbound_closed, _apply_ssh_inbound_closed, needs_root=True,
     ),
     HardenItem(
         "fail2ban installed and active",
         "log-driven intrusion prevention — auto-bans an IP after repeated failed auth",
         _check_fail2ban, _apply_fail2ban, needs_root=True, needs_package="fail2ban",
+    ),
+    HardenItem(
+        "CrowdSec agent + nftables bouncer active",
+        "community IP blocklist plus local log detection; the bouncer is what actually drops packets",
+        _check_crowdsec, _apply_crowdsec, needs_root=True,
     ),
     HardenItem(
         "rkhunter installed",
