@@ -15,5 +15,7 @@ st.invalidate_from("source", ORDER); st.save(d); print("invalidated from source"
 PY
 step "build $VER (~40 min)"
 mkdir -p out/logs
+# EXPERIMENTAL=1 also applies series.experimental (ADR-009)
+[ "${EXPERIMENTAL:-0}" = 1 ] && export HYPHAED_EXPERIMENTAL=1
 $PY -m hyphaed --target "$VER" --phase package -y 2>&1 | tee "out/logs/bump-$VER-$(date +%Y%m%d-%H%M).log"
 ls -la out/debs/ | grep "$VER"

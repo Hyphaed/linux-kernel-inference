@@ -20,7 +20,9 @@ while read -r p; do
     git -C "$V" am --abort 2>/dev/null; exit 1
   fi
   grep -E '^diff --git' "$ROOT/$f" | sed 's#.* b/##' >> "$touched"
-done < "$SERIES_DIR/series"
+done < <({ cat "$SERIES_DIR/series"
+  # ADR-009: with EXPERIMENTAL=1 the experimental series is validated stacked on the default one
+  if [ "${EXPERIMENTAL:-0}" = 1 ] && [ -f "$SERIES_DIR/series.experimental" ]; then cat "$SERIES_DIR/series.experimental"; fi; })
 LC_ALL=C sort -u "$touched" -o "$touched"
 step "7.2-removed API scan"
 $PY -m pytest tests/test_kernel_org_72.py -q -k removed
