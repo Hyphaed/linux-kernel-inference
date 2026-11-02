@@ -1,7 +1,7 @@
 [![Kernel](https://img.shields.io/badge/kernel.org-7.1.x%20%7C%207.2.x-orange.svg)](https://kernel.org/)
-[![Tested on](https://img.shields.io/badge/running-7.2.1--hyphaed-green.svg)](https://ubuntu.com/)
+[![Tested on](https://img.shields.io/badge/running-7.2.14--hyphaed-green.svg)](https://ubuntu.com/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-yellow.svg)](https://python.org/)
-[![Tests](https://img.shields.io/badge/tests-475%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-719%20passing-brightgreen.svg)](tests/)
 [![License: GPL v2](https://img.shields.io/badge/license-GPL--2.0-red.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 
 # 🐧 Hyphaed Kernel
@@ -109,13 +109,16 @@ desktop pull different fragment sets from the same preset.
 
 ```
 hyphaed/                  the build tool: a phased pipeline
-  phases/                 detect, source, patch, configure, build,
-                           package, install, postinstall, security
+  phases/                 detect, source, patch, configure, security,
+                           build, package, install, postinstall, nvidia,
+                           desktop, proton
   greenboost.py            reads GreenBoost's hardware profile and
                            cross-checks it against ours
 patches/
   kernel-org-7.1/series    active series for kernel.org 7.1.x
   kernel-org-7.2/series    active series for kernel.org 7.2.x (current default)
+  kernel-org-7.3/series    staged for 7.3.x: applies and compiles, not booted yet
+  kernel-org-7.2/series.experimental  unmeasured patches, applied only with --experimental
   custom/                  original work and forward-ports, including the six above
   VENDOR-kernel-org-*.lock every source pinned by sha256
   fetch.py                 populate from the pinned local sources
@@ -128,7 +131,7 @@ diagnostics/               dry-run-by-default scripts for real hardware issues
                            found on this box (NVIDIA driver track switching,
                            GDS symvers mismatches, boot repairs, DGX-OS parity)
 docs/                      research notes, patch planning, boot audits
-tests/                     475 tests; tests/kernel_runtime/ reads the
+tests/                     719 tests; tests/kernel_runtime/ reads the
                            actually-running kernel and skips itself on anything
                            that isn't a -hyphaed build
 ```
@@ -143,10 +146,16 @@ python -m hyphaed install       # dpkg -i + GRUB drop-in + DKMS + smoke checks
 ```
 
 `install_wizard.sh` walks the whole thing interactively if you'd rather be
-asked than remember flags. `--target` defaults to `7.2.1` — the version this
-box actually boots (`uname -r` reads `7.2.1-hyphaed`); bump it in
-`hyphaed/cli.py` once a newer kernel.org stable release has been validated
-the same way, or run `hyphaed list-versions` to see the last five with dates.
+asked than remember flags. `--target` defaults to `7.2.10` in `hyphaed/cli.py`;
+pass `--target 7.2.14` for the version this box boots now (`uname -r` reads
+`7.2.14-hyphaed`). Bump the default once a newer kernel.org stable release has
+been validated, or run `hyphaed list-versions` to see the last five with dates.
+`make bump VER=<x.y.z>` runs the whole re-runnable bump pipeline.
+
+The last three phases run after `install` and are separate from the kernel:
+`nvidia` builds the open modules from a pinned checkout, `desktop` rebuilds
+mutter and gnome-shell for this host and keeps the result only if it measures
+no worse, and `proton` keeps the Steam compatibility tools current.
 
 The upstream trees aren't vendored here. `linux/`, the CachyOS patch
 collection and the other reference clones are fetched, not committed, which
@@ -197,7 +206,7 @@ kernel is never touched, so it's always the fallback.
 python -m pytest tests/ -q
 ```
 
-475 tests, well under a second — mostly `hyphaed`'s own tooling invariants
+719 tests, about six seconds — mostly `hyphaed`'s own tooling invariants
 (fragment wiring, patch-series consistency, cmdline composition, floor
 validation), not kernel behavior. `tests/kernel_runtime/` is different: it
 reads the currently *running* kernel back and checks whether each patch in

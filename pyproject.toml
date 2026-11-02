@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hyphaed"
-version = "0.1.0"
+version = "1.0.0"
 description = "Custom Linux kernel build wizard for AI inference + Steam/Proton + VMware on Intel hybrid + NVIDIA workstations"
 readme = "README.md"
 requires-python = ">=3.10"
