@@ -1,0 +1,45 @@
+From 75d047a34a3cf5082ecefcdb9698f97229defdd1 Mon Sep 17 00:00:00 2001
+From: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Date: Wed, 1 Jul 2026 18:17:36 +0200
+Subject: [PATCH 57/78] futex: Optimise the size check get_futex_key()
+
+The futex address must be naturally aligned and this is checked via
+"address % size" where `address' is the supplied address and `size' is
+the expected size of futex. It is guaranteed that `size' is power of two
+but the compiler does not see it and creates here a `div' operation
+(x86, arm, gcc-15).
+
+We can take advantage of the pow2 property and rewrite it as
+"address & (size-1)".
+
+As per testing, the command
+|perf bench futex hash -f 1 -b 16384 -t 1 -r 30
+
+improved from
+| [thread  0] futex: 0x5619f931f740 [ 7001583 ops/sec ]
+to
+| [thread  0] futex: 0x55da173e5740 [ 7376137 ops/sec ]
+
+or by 5.3%
+
+Signed-off-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Link: https://patch.msgid.link/20260701161736.xYYizA0e@linutronix.de
+(cherry picked from commit 5e601ab3615c86be7c4068ce992f94654693a032)
+---
+ kernel/futex/core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/futex/core.c b/kernel/futex/core.c
+index 575a698a2594..41269100400e 100644
+--- a/kernel/futex/core.c
++++ b/kernel/futex/core.c
+@@ -535,7 +535,7 @@ int get_futex_key(u32 __user *uaddr, unsigned int flags, union futex_key *key,
+ 	 * The futex address must be "naturally" aligned.
+ 	 */
+ 	key->both.offset = address % PAGE_SIZE;
+-	if (unlikely((address % size) != 0))
++	if (unlikely((address & (size-1)) != 0))
+ 		return -EINVAL;
+ 	address -= key->both.offset;
+ 

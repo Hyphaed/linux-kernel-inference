@@ -1,0 +1,56 @@
+From 39e3c788ca3b62b0355cb65ac9e92ba64bf4728f Mon Sep 17 00:00:00 2001
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Tue, 28 Jul 2026 05:25:33 +0000
+Subject: [PATCH 58/78] x86/runtime-const: Introduce runtime_const_mask_32()
+
+Futex hash computation requires a mask operation with read-only after
+init data that will be converted to a runtime constant in the subsequent
+commit.
+
+Introduce runtime_const_mask_32 to further optimize the mask operation
+in the futex hash computation hot path.
+
+  [ prateek: Broke off the x86 chunk, commit message. ]
+
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Signed-off-by: K Prateek Nayak <kprateek.nayak@amd.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Link: https://patch.msgid.link/20260227161841.GH606826@noisy.programming.kicks-ass.net
+Link: https://patch.msgid.link/20260728052540.4728-2-kprateek.nayak@amd.com
+(cherry picked from commit 775e0f2284554e24855c4372faeb957a5e515337)
+---
+ arch/x86/include/asm/runtime-const.h | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/x86/include/asm/runtime-const.h b/arch/x86/include/asm/runtime-const.h
+index 4cd94fdcb45e..b13f7036c1c9 100644
+--- a/arch/x86/include/asm/runtime-const.h
++++ b/arch/x86/include/asm/runtime-const.h
+@@ -41,6 +41,15 @@
+ 		:"+r" (__ret));					\
+ 	__ret; })
+ 
++#define runtime_const_mask_32(val, sym) ({			\
++	typeof(0u+(val)) __ret = (val);				\
++	asm_inline("and $0x12345678, %k0\n1:\n"				\
++		   ".pushsection runtime_mask_" #sym ",\"a\"\n\t"\
++		   ".long 1b - 4 - .\n"				\
++		   ".popsection"				\
++		   : "+r" (__ret));				\
++	__ret; })
++
+ #define runtime_const_init(type, sym) do {		\
+ 	extern s32 __start_runtime_##type##_##sym[];	\
+ 	extern s32 __stop_runtime_##type##_##sym[];	\
+@@ -65,6 +74,11 @@ static inline void __runtime_fixup_shift(void *where, unsigned long val)
+ 	*(unsigned char *)where = val;
+ }
+ 
++static inline void __runtime_fixup_mask(void *where, unsigned long val)
++{
++	*(unsigned int *)where = val;
++}
++
+ static inline void runtime_const_fixup(void (*fn)(void *, unsigned long),
+ 	unsigned long val, s32 *start, s32 *end)
+ {

@@ -29,7 +29,31 @@ step "SteamOS evlaV/linux-integration $SERIES_MM/integration (blobless, shallow)
 SV="$ROOT/github/steamos"
 [ -d "$SV/.git" ] || timeout "$T" git clone --no-checkout --filter=blob:none --depth 400 -b "$SERIES_MM/integration" \
     https://github.com/evlaV/linux-integration "$SV" || echo "WARN: steamos clone failed (gitlab/github flaky)"
-[ -d "$SV/.git" ] && { f "$SV" --depth 400 origin "$SERIES_MM/integration"; rec steamos "$SV"; }
+# explicit refspec: a bare branch name only writes FETCH_HEAD, so origin/$SERIES_MM/integration never existed and the
+# sweep reported "0 commits" for Valve on 7.3.1 (found 2026-11-04)
+[ -d "$SV/.git" ] && { f "$SV" --depth 400 origin "+refs/heads/$SERIES_MM/integration:refs/remotes/origin/$SERIES_MM/integration"; rec steamos "$SV"; }
+
+step "forks and vendor trees (zen, liquorix, Google, AMD, NVIDIA): fork-only commits are filtered at sweep time"
+# blobless + shallow; commits that also exist in the kernel.org mirror are mainline and get dropped by 20-sweep.py
+VD="$ROOT/github/vendors"; mkdir -p "$VD"
+PREV_MM="${SERIES_MM%.*}.$(( ${SERIES_MM#*.} - 1 ))"
+vfetch() {  # name url refspec...
+  local n="$1" u="$2"; shift 2
+  if [ ! -d "$VD/$n/.git" ]; then
+    git init -q "$VD/$n"; git -C "$VD/$n" remote add origin "$u"
+    git -C "$VD/$n" config remote.origin.promisor true; git -C "$VD/$n" config remote.origin.partialclonefilter blob:none
+  fi
+  f "$VD/$n" --depth 100 --no-tags --filter=blob:none origin "$@" && rec "$n" "$VD/$n"
+}
+vfetch zen        https://github.com/zen-kernel/zen-kernel          "+refs/heads/$SERIES_MM/*:refs/remotes/origin/$SERIES_MM/*" "+refs/heads/$PREV_MM/main:refs/remotes/origin/$PREV_MM/main"
+vfetch liquorix   https://github.com/damentz/liquorix-package       "+refs/heads/$SERIES_MM/*:refs/remotes/origin/$SERIES_MM/*" "+refs/heads/$PREV_MM/master:refs/remotes/origin/$PREV_MM/master"
+vfetch google-bbr https://github.com/google/bbr                     "+refs/heads/v3:refs/remotes/origin/v3"
+vfetch android    https://android.googlesource.com/kernel/common    "+refs/heads/android18-$SERIES_MM:refs/remotes/origin/android18-$SERIES_MM" "+refs/heads/android-mainline:refs/remotes/origin/android-mainline"
+vfetch amdgpu     https://gitlab.freedesktop.org/agd5f/linux        "+refs/heads/amd-staging-drm-next:refs/remotes/origin/amd-staging-drm-next"
+vfetch pdx86      https://git.kernel.org/pub/scm/linux/kernel/git/pdx86/platform-drivers-x86.git "+refs/heads/for-next:refs/remotes/origin/for-next"
+# NVIDIA: the driver is out of tree; what matters is the newest tag vs the pinned 615.x (ADR-002)
+git ls-remote --tags --refs https://github.com/NVIDIA/open-gpu-kernel-modules 2>/dev/null | sed 's#.*refs/tags/##' | sort -V | tail -8 > "$OUT/nvidia-open-tags.txt" \
+  || echo "WARN: nvidia tag listing failed"
 
 step "patch-source inventory (patches/sources.tsv): verify every URL, clone hardware-relevant carriers"
 $PY scripts/bump/source-inventory.py --fetch --candidates || echo "WARN: some inventory sources unreachable (see $OUT/inventory.md)"

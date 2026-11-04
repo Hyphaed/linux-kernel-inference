@@ -1,0 +1,172 @@
+From e673f3d06543c127e559182ee05608e652091f7e Mon Sep 17 00:00:00 2001
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Tue, 28 Jul 2026 05:25:40 +0000
+Subject: [PATCH 59/78] futex: Use runtime constants for __futex_hash() hot
+ path
+
+Runtime constify the read-only after init data  __futex_shift(shift_32),
+__futex_mask(mask_32), and __futex_queues(ptr) used in __futex_hash()
+hot path to avoid referencing global variable.
+
+This also allows __futex_queues to be allocated dynamically to
+"nr_node_ids" slots instead of reserving config dependent MAX_NUMNODES
+(1 << CONFIG_NODES_SHIFT) worth of slots upfront.
+
+Runtime constants are initialized before their first access and
+runtime_const_init() provides necessary barrier to ensure subsequent
+accesses are not reordered against their initialization.
+
+No functional changes intended.
+
+perf bench futex on a 3rd Gen EPYC (2 x 64C/128T):
+
++----------------+-----------+-----------+-----------+--------------+
+| Benchmark      | Kernel 1  | Kernel 2  |   Unit    | % Improvement|
+|                |  (avg/5)  |  (avg/5)  |           | (K2 vs K1)   |
++----------------+-----------+-----------+-----------+--------------+
+| Wake-parallel  |  0.01614  |  0.00456  |    ms     |   +71.75%    |
+| Requeue        |  0.26394  |  0.24644  |    ms     |    +6.63%    |
+| Lock-pi        |     34.0  |     57.2  |  ops/sec  |   +68.24%    |
++----------------+-----------+-----------+-----------+--------------+
+
+Performance testing on a 144-thread Intel(R) Xeon(R) CPU E7-8890 v3 (4 NUMA nodes):
+
++-------------------------------------------------------------+
+| perf bench futex hash -b 0                                  |
++----------------------+------------+------------+------------+
+| Configuration        | As-is      | Patched    | Delta      |
++----------------------+------------+------------+------------+
+| 1 thread, 1 futex    |  6,449,632 |  6,532,004 |   +1.28%   |
+| 144 threads, 1024 fx |  2,111,486 |  2,139,685 |   +1.34%   |
++----------------------+------------+------------+------------+i
+
+  [ prateek: Dynamically allocate __futex_queues, mark the global data
+    __ro_after_init since they are constified after futex_init(). ]
+
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Reported-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de> # MAX_NUMNODES bloat
+Signed-off-by: K Prateek Nayak <kprateek.nayak@amd.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Reviewed-by: Charlie Jenkins <thecharlesjenkins@gmail.com>
+Tested-by: Charlie Jenkins <thecharlesjenkins@gmail.com>
+Link: https://patch.msgid.link/20260227161841.GH606826@noisy.programming.kicks-ass.net
+Link: https://patch.msgid.link/20260728052540.4728-9-kprateek.nayak@amd.com
+(cherry picked from commit b78b0b65825275f58336a43611a700de174be8c3)
+---
+ include/asm-generic/vmlinux.lds.h |  5 +++-
+ kernel/futex/core.c               | 44 ++++++++++++++++++-------------
+ 2 files changed, 29 insertions(+), 20 deletions(-)
+
+diff --git a/include/asm-generic/vmlinux.lds.h b/include/asm-generic/vmlinux.lds.h
+index ee9c5d354a85..b2988aa12f66 100644
+--- a/include/asm-generic/vmlinux.lds.h
++++ b/include/asm-generic/vmlinux.lds.h
+@@ -978,7 +978,10 @@
+ 		RUNTIME_CONST(ptr, __dentry_cache)			\
+ 		RUNTIME_CONST(ptr, __names_cache)			\
+ 		RUNTIME_CONST(ptr, __filp_cache)			\
+-		RUNTIME_CONST(ptr, __bfilp_cache)
++		RUNTIME_CONST(ptr, __bfilp_cache)			\
++		RUNTIME_CONST(shift, __futex_shift)			\
++		RUNTIME_CONST(mask,  __futex_mask)			\
++		RUNTIME_CONST(ptr,   __futex_queues)
+ 
+ /* Alignment must be consistent with (kunit_suite *) in include/kunit/test.h */
+ #define KUNIT_TABLE()							\
+diff --git a/kernel/futex/core.c b/kernel/futex/core.c
+index 41269100400e..08ae82f2bd35 100644
+--- a/kernel/futex/core.c
++++ b/kernel/futex/core.c
+@@ -49,23 +49,19 @@
+ 
+ #include <vdso/futex.h>
+ 
++#include <asm/runtime-const.h>
++
+ #include "futex.h"
+ #include "../locking/rtmutex_common.h"
+ 
+-/*
+- * The base of the bucket array and its size are always used together
+- * (after initialization only in futex_hash()), so ensure that they
+- * reside in the same cacheline.
+- */
+-static struct {
+-	unsigned long            hashmask;
+-	unsigned int		 hashshift;
+-	struct futex_hash_bucket *queues[MAX_NUMNODES];
+-} __futex_data __read_mostly __aligned(2*sizeof(long));
++static u32 __futex_mask __ro_after_init;
++static u32 __futex_shift __ro_after_init;
++static struct futex_hash_bucket **__futex_queues __ro_after_init;
+ 
+-#define futex_hashmask	(__futex_data.hashmask)
+-#define futex_hashshift	(__futex_data.hashshift)
+-#define futex_queues	(__futex_data.queues)
++static __always_inline struct futex_hash_bucket **futex_queues(void)
++{
++	return runtime_const_ptr(__futex_queues);
++}
+ 
+ struct futex_private_hash {
+ 	int		state;
+@@ -404,13 +400,13 @@ __futex_hash(union futex_key *key, struct futex_private_hash *fph, struct futex_
+ 		 * NOTE: this isn't perfectly uniform, but it is fast and
+ 		 * handles sparse node masks.
+ 		 */
+-		node = (hash >> futex_hashshift) % nr_node_ids;
++		node = runtime_const_shift_right_32(hash, __futex_shift) % nr_node_ids;
+ 		if (!node_possible(node)) {
+ 			node = find_next_bit_wrap(node_possible_map.bits, nr_node_ids, node);
+ 		}
+ 	}
+ 
+-	return &futex_queues[node][hash & futex_hashmask];
++	return &futex_queues()[node][runtime_const_mask_32(hash, __futex_mask)];
+ }
+ 
+ /**
+@@ -2015,7 +2011,7 @@ int futex_hash_allocate_default(void)
+ 	 *   16 <= threads * 4 <= global hash size
+ 	 */
+ 	buckets = roundup_pow_of_two(4 * threads);
+-	buckets = clamp(buckets, 16, futex_hashmask + 1);
++	buckets = clamp(buckets, 16, __futex_mask + 1);
+ 
+ 	if (current_buckets >= buckets)
+ 		return 0;
+@@ -2112,10 +2108,21 @@ static int __init futex_init(void)
+ 	hashsize = max(4, hashsize);
+ 	hashsize = roundup_pow_of_two(hashsize);
+ #endif
+-	futex_hashshift = ilog2(hashsize);
++	__futex_mask = hashsize - 1;
++	__futex_shift = ilog2(hashsize);
+ 	size = sizeof(struct futex_hash_bucket) * hashsize;
+ 	order = get_order(size);
+ 
++	__futex_queues = kcalloc(nr_node_ids, sizeof(*__futex_queues), GFP_KERNEL);
++
++	runtime_const_init(shift, __futex_shift);
++	runtime_const_init(mask,  __futex_mask);
++	runtime_const_init(ptr,   __futex_queues);
++
++	barrier();
++
++	BUG_ON(!futex_queues());
++
+ 	for_each_node(n) {
+ 		struct futex_hash_bucket *table;
+ 
+@@ -2129,10 +2136,9 @@ static int __init futex_init(void)
+ 		for (i = 0; i < hashsize; i++)
+ 			futex_hash_bucket_init(&table[i]);
+ 
+-		futex_queues[n] = table;
++		futex_queues()[n] = table;
+ 	}
+ 
+-	futex_hashmask = hashsize - 1;
+ 	pr_info("futex hash table entries: %lu (%lu bytes on %d NUMA nodes, total %lu KiB, %s).\n",
+ 		hashsize, size, num_possible_nodes(), size * num_possible_nodes() / 1024,
+ 		order > MAX_PAGE_ORDER ? "vmalloc" : "linear");

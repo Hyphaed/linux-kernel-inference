@@ -39,6 +39,20 @@ def log_since(name, repo, rng_end, paths=(), limit=60, extra=()):
     hdr = f"{len(lines)} commits" + (f" since {old[:12]}" if old else f" (first sweep, last {limit})")
     return [f"**{name}** {hdr}"] + [f"- {l}{tag(l)}" for l in lines[:limit]]
 
+
+def fork_only(name, repo, refs, limit=40):
+    """Commits on the fork's branches that are NOT in the kernel.org mirror (= the fork's own work)."""
+    out = []
+    for ref in refs:
+        shas = git(repo, "log", "--no-merges", "--format=%H %h %an: %s", "-n300", ref).splitlines()
+        if not shas: out.append(f"_{name}: {ref} not available_"); continue
+        have = subprocess.run(["git", "-C", str(KO), "cat-file", "--batch-check"],
+                              input="".join(l.split()[0] + "\n" for l in shas), capture_output=True, text=True).stdout.splitlines()
+        own = [l.split(" ", 1)[1] for l, h in zip(shas, have) if h.endswith("missing")]
+        out += [f"**{name}** `{ref.replace('refs/remotes/', '')}`: {len(own)} fork-only commits (of {len(shas)} scanned)"]
+        out += [f"- {l}{tag(l.split(' ', 1)[1])}" for l in own[:limit]] + [""]
+    return out
+
 state_new = {}
 md = [f"# Patch sweep candidates for {ver}\n"]
 KO = ROOT / "github/kernelorg/linux"
@@ -66,6 +80,24 @@ for n, repo, ref, paths in [
     ("steamos", ROOT / "github/steamos", f"origin/{mm}/integration", ()),
 ]:
     md += log_since(n, repo, ref, paths) + [""]
+
+# 2b. forks and vendors (zen, liquorix, Google, AMD): only their own commits, mainline filtered out
+md += ["\n## Forks and vendors (fork-only commits)\n"]
+VD = ROOT / "github/vendors"
+pm = f"{mm.split('.')[0]}.{int(mm.split('.')[1]) - 1}"
+zen = [r for r in git(VD / "zen", "for-each-ref", "--format=%(refname)", f"refs/remotes/origin/{mm}/").splitlines()]
+md += fork_only("zen", VD / "zen", zen or [f"origin/{pm}/main"], 25)
+if not zen: md.append(f"_zen has no {mm}/* topic branches yet; showing {pm}/main_\n")
+md += fork_only("liquorix", VD / "liquorix", [f"origin/{mm}/master"] if git(VD / "liquorix", "rev-parse", f"origin/{mm}/master")
+                else [f"origin/{pm}/master"], 25)
+md += fork_only("google-bbr (BBRv3)", VD / "google-bbr", ["origin/v3"], 25)
+md += fork_only("android-common", VD / "android", [f"origin/android18-{mm}", "origin/android-mainline"], 30)
+md += fork_only("valve-steamos (evlaV linux-integration)", ROOT / "github/steamos", [f"origin/{mm}/integration"], 40)
+md += fork_only("amd-staging-drm-next", VD / "amdgpu", ["origin/amd-staging-drm-next"], 30)
+md += fork_only("pdx86 for-next (AMD PMF/PMC/HSMP, Intel/ASUS/HP platform)", VD / "pdx86", ["origin/for-next"], 20)
+nv = out / "nvidia-open-tags.txt"
+md.append("**nvidia open-gpu-kernel-modules** newest tags (pinned driver: see ADR-002): " +
+          (", ".join(nv.read_text().split()) if nv.exists() else "_not listed_") + "\n")
 
 # 3. stable queue
 sq = ROOT / "github/stable-queue" / f"queue-{mm}"

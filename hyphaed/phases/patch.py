@@ -124,6 +124,14 @@ def _series_file_for(repo_root: Path, source_mode: str, ctx=None) -> Path:
         if version:
             d = repo_root / "patches" / f"kernel-org-{version}"
             if d.is_dir():
+                # HYPHAED_SERIES_VARIANT=<name> selects series.<name> beside the default (ADR-009: an alternative
+                # ordering that cannot be expressed as "append after series", e.g. a scheduler swap before BORE)
+                variant = os.environ.get("HYPHAED_SERIES_VARIANT", "").strip()
+                if variant:
+                    vf = d / f"series.{variant}"
+                    if not vf.is_file():
+                        raise SystemExit(f"HYPHAED_SERIES_VARIANT={variant}: {vf} does not exist")
+                    return vf
                 return d / "series"
             raise SystemExit(
                 f"no patch series for kernel {version}: expected {d}/series.\n"

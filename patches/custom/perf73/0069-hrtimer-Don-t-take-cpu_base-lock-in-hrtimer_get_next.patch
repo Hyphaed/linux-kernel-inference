@@ -1,0 +1,71 @@
+From d23d5b0ad1d3c554ee9edde16673e3ef67c08ca1 Mon Sep 17 00:00:00 2001
+From: Usama Arif <usama.arif@linux.dev>
+Date: Tue, 7 Jul 2026 08:38:00 -0700
+Subject: [PATCH 69/78] hrtimer: Don't take cpu_base::lock in
+ hrtimer_get_next_event() when hres_active
+
+hrtimer_get_next_event() runs on every tick-stop decision via
+get_next_timer_interrupt() -> cmp_next_hrtimer_event().  When high
+resolution timers are active it must return KTIME_MAX -- the caller
+documents and depends on this.
+
+The function takes cpu_base->lock, checks hres_active, and returns
+KTIME_MAX.
+
+Taking the lock is not required because cpu_base->hres_active is only
+written by the local CPU in hrtimer_switch_to_hres() from hard interrupt
+context and in hrtimers_cpu_starting() during bring-up.
+
+All callers of hrtimer_get_next_event() reach it from the tick-stop /
+cpuidle paths with interrupts disabled on that CPU. No writer can therefore
+race with the read, so an unlocked hres_active check is stable and the lock
+can be skipped in this case.
+
+On a 176-thread AMD EPYC 9D64 running a production workload, bucketing
+callers of native_queued_spin_lock_slowpath(), the slowpath had 199 samples
+in total, of which 54 are attributed to hrtimer_get_next_event(), i.e. this
+accounts for ~27% of slowpath hits on this specific workload.
+
+Move the hres_active check before the lock guard region to address this.
+
+[ tglx: Massaged change log and comments ]
+
+Signed-off-by: Usama Arif <usama.arif@linux.dev>
+Signed-off-by: Thomas Gleixner <tglx@kernel.org>
+Link: https://patch.msgid.link/20260707153800.542394-1-usama.arif@linux.dev
+(cherry picked from commit c4415c993fc2c8bdf2cf0bfbcbb1ac0e0f7a9eaf)
+---
+ kernel/time/hrtimer.c | 18 +++++++++++++-----
+ 1 file changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/kernel/time/hrtimer.c b/kernel/time/hrtimer.c
+index 71015e59f5de..ff068a3b6036 100644
+--- a/kernel/time/hrtimer.c
++++ b/kernel/time/hrtimer.c
+@@ -1793,13 +1793,21 @@ EXPORT_SYMBOL_GPL(__hrtimer_get_remaining);
+ ktime_t hrtimer_get_next_event(void)
+ {
+ 	struct hrtimer_cpu_base *cpu_base = this_cpu_ptr(&hrtimer_bases);
+-	ktime_t expires = KTIME_MAX;
+ 
+-	guard(raw_spinlock_irqsave)(&cpu_base->lock);
+-	if (!hrtimer_hres_active(cpu_base))
+-		expires = __hrtimer_get_next_event(cpu_base, HRTIMER_ACTIVE_ALL);
++	/*
++	 * When HRES is active cmp_next_hrtimer_event() expects KTIME_MAX.
++	 *
++	 * cpu_base->hres_active is written only by the local CPU in
++	 * hrtimer_switch_to_hres() from hard interrupt context and in
++	 * hrtimers_cpu_starting() during CPU bring-up, and all callers reach
++	 * this with interrupts disabled on the same CPU, so an unlocked read is
++	 * stable without holding the lock.
++	 */
++	if (hrtimer_hres_active(cpu_base))
++		return KTIME_MAX;
+ 
+-	return expires;
++	guard(raw_spinlock_irqsave)(&cpu_base->lock);
++	return __hrtimer_get_next_event(cpu_base, HRTIMER_ACTIVE_ALL);
+ }
+ 
+ /**

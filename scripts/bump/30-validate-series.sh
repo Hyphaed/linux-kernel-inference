@@ -20,7 +20,7 @@ while read -r p; do
     git -C "$V" am --abort 2>/dev/null; exit 1
   fi
   grep -E '^diff --git' "$ROOT/$f" | sed 's#.* b/##' >> "$touched"
-done < <({ cat "$SERIES_DIR/series"
+done < <({ cat "$SERIES_DIR/series${HYPHAED_SERIES_VARIANT:+.$HYPHAED_SERIES_VARIANT}"
   # ADR-009: with EXPERIMENTAL=1 the experimental series is validated stacked on the default one
   if [ "${EXPERIMENTAL:-0}" = 1 ] && [ -f "$SERIES_DIR/series.experimental" ]; then cat "$SERIES_DIR/series.experimental"; fi; })
 LC_ALL=C sort -u "$touched" -o "$touched"
@@ -28,7 +28,7 @@ step "7.2-removed API scan"
 $PY -m pytest tests/test_kernel_org_72.py -q -k removed
 step "configure from the running kernel's config"
 cp "/boot/config-$(uname -r)" "$V/.config"
-make -C "$V" -s olddefconfig >/dev/null && make -C "$V" -s -j"$(nproc)" modules_prepare
+make -C "$V" -s olddefconfig >/dev/null && make -C "$V" -s -j"$JOBS" modules_prepare
 objs=$(grep -E '\.c$' "$touched" | sed 's/\.c$/.o/' | while read -r o; do [ -f "$V/${o%.o}.c" ] && echo "$o"; done)
 # files changed between releases that a patch also touches = where context drift hides
 if [ -n "${PREV:-}" ] && git -C "$KO" rev-parse -q --verify "v$PREV^{commit}" >/dev/null; then
@@ -38,6 +38,12 @@ fi
 # them as standalone objects fails on missing includes (e.g. cpu_clock in debug.c), a harness artefact.
 objs=$(echo "$objs" | tr ' ' '\n' | grep -vE '^kernel/sched/(core|fair|rt|deadline|ext|idle|cputime|stop_task|syscalls|wait|wait_bit|swait|completion|loadavg|clock|cpupri|cpudeadline|topology|debug|stats|pelt|autogroup|membarrier|isolation|cpuacct|psi|build_.*)\.o$' || true)
 if grep -q '^kernel/sched/' "$touched"; then objs="$objs kernel/sched/build_policy.o kernel/sched/build_utility.o"; fi
+# Since 7.2 some kernel/sched files are their own objects (obj-y += fair.o), not part of the unity builds; the
+# exclusion above would skip them. Compile any touched kernel/sched/X.c that the Makefile lists as a standalone object.
+# (Missed on 2026-11-04: a 7.3 fair.c including a header 7.2 lacks only failed in the full vmlinux build.)
+for o in $(grep -E '^kernel/sched/[^/]+\.c$' "$touched" | sed 's/\.c$/.o/'); do
+  grep -qE "^obj-[^ ]* \+= ${o##*/}\$" "$V/kernel/sched/Makefile" && objs="$objs $o"
+done
 objs=$(echo $objs | tr ' ' '\n' | sort -u | tr '\n' ' ')
 step "compile $(echo $objs | wc -w) objects (serial make -k: a parallel make of these targets died with fixdep ".d: No such file" errors, serial passes)"
 # shellcheck disable=SC2086

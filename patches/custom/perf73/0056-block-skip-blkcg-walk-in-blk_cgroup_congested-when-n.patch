@@ -1,0 +1,177 @@
+From 1091470e5125d5b9403f2e8322b327f83823b344 Mon Sep 17 00:00:00 2001
+From: Usama Arif <usama.arif@linux.dev>
+Date: Fri, 14 Aug 2026 09:56:39 -0700
+Subject: [PATCH 56/78] block: skip blkcg walk in blk_cgroup_congested() when
+ nothing throttled
+
+blk_cgroup_congested() walks the current task's blkcg ancestor chain on
+every readahead decision and, once swap is in use, on every anonymous and
+shmem folio allocation.  The answer is almost always "no", but finding that
+out costs two loads per level on two cold cache lines, plus an out-of-line
+kthread_blkcg() and an RCU read-side pair.  On a fleet profile of hosts
+running containers with 5-10 level hierarchies it costs about as much as
+all of mutex_lock(), 99.4% of it under __folio_throttle_swaprate().
+
+Gate the walk on a global count of blkcgs with a non-zero
+congestion_count.  The counter only moves on the 0 <-> 1 transitions of
+each blkcg's congestion_count, so the extra atomic stays in the throttle
+arm/disarm paths and never appears in steady state. When something is
+throttled the counter is non-zero and the walk runs as before.
+
+Signed-off-by: Usama Arif <usama.arif@linux.dev>
+Acked-by: Tejun Heo <tj@kernel.org>
+Link: https://patch.msgid.link/20260814165712.510132-4-usama.arif@linux.dev
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+(cherry picked from commit 4febfe7d98948bf6693f5c6a0a7e198e8fb4e584)
+---
+ block/blk-cgroup.c         | 15 ++++++++++++++-
+ block/blk-cgroup.h         | 25 +++++++++++++++++++++----
+ include/linux/blk-cgroup.h | 23 ++++++++++++++++++++++-
+ 3 files changed, 57 insertions(+), 6 deletions(-)
+
+diff --git a/block/blk-cgroup.c b/block/blk-cgroup.c
+index 1951bda17cf5..61f472e15460 100644
+--- a/block/blk-cgroup.c
++++ b/block/blk-cgroup.c
+@@ -53,6 +53,9 @@ EXPORT_SYMBOL_GPL(blkcg_root);
+ struct cgroup_subsys_state * const blkcg_root_css = &blkcg_root.css;
+ EXPORT_SYMBOL_GPL(blkcg_root_css);
+ 
++/* number of blkcgs with a non-zero congestion_count */
++atomic_t blkcg_nr_congested __read_mostly = ATOMIC_INIT(0);
++
+ static struct blkcg_policy *blkcg_policy[BLKCG_MAX_POLS];
+ 
+ static LIST_HEAD(all_blkcgs);		/* protected by blkcg_pol_mutex */
+@@ -1347,6 +1350,16 @@ static void blkcg_css_free(struct cgroup_subsys_state *css)
+ 	struct blkcg *blkcg = css_to_blkcg(css);
+ 	int i;
+ 
++	/*
++	 * Every blkg holds a reference on this css and drops any delay it
++	 * still has from pd_free_fn(), so this is expected to be zero.  Should
++	 * a policy ever leave one behind, drop it here rather than let it pin
++	 * blkcg_nr_congested and disable the fast path for the rest of the
++	 * boot.  Nothing can race with us at this point.
++	 */
++	if (WARN_ON_ONCE(atomic_xchg(&blkcg->congestion_count, 0) > 0))
++		atomic_dec(&blkcg_nr_congested);
++
+ 	mutex_lock(&blkcg_pol_mutex);
+ 
+ 	list_del(&blkcg->all_blkcgs_node);
+@@ -2229,7 +2242,7 @@ void blk_cgroup_bio_start(struct bio *bio)
+ 	put_cpu();
+ }
+ 
+-bool blk_cgroup_congested(void)
++bool __blk_cgroup_congested(void)
+ {
+ 	struct blkcg *blkcg;
+ 	bool ret = false;
+diff --git a/block/blk-cgroup.h b/block/blk-cgroup.h
+index 615390f751aa..e67c69839129 100644
+--- a/block/blk-cgroup.h
++++ b/block/blk-cgroup.h
+@@ -375,12 +375,29 @@ static inline void blkg_put(struct blkcg_gq *blkg)
+ 		if (((d_blkg) = blkg_lookup(css_to_blkcg(pos_css),	\
+ 					    (p_blkg)->q)))
+ 
++/*
++ * blkcg_nr_congested gates the hierarchy walk in blk_cgroup_congested().
++ * These two helpers keep it in step with each blkcg's congestion_count in
++ * normal operation; blkcg_css_free() drops a residual count as a backstop.
++ */
++static inline void blkcg_inc_congestion_count(struct blkcg *blkcg)
++{
++	if (atomic_inc_return(&blkcg->congestion_count) == 1)
++		atomic_inc(&blkcg_nr_congested);
++}
++
++static inline void blkcg_dec_congestion_count(struct blkcg *blkcg)
++{
++	if (atomic_dec_and_test(&blkcg->congestion_count))
++		atomic_dec(&blkcg_nr_congested);
++}
++
+ static inline void blkcg_use_delay(struct blkcg_gq *blkg)
+ {
+ 	if (WARN_ON_ONCE(atomic_read(&blkg->use_delay) < 0))
+ 		return;
+ 	if (atomic_add_return(1, &blkg->use_delay) == 1)
+-		atomic_inc(&blkg->blkcg->congestion_count);
++		blkcg_inc_congestion_count(blkg->blkcg);
+ }
+ 
+ static inline int blkcg_unuse_delay(struct blkcg_gq *blkg)
+@@ -405,7 +422,7 @@ static inline int blkcg_unuse_delay(struct blkcg_gq *blkg)
+ 	if (old == 0)
+ 		return 0;
+ 	if (old == 1)
+-		atomic_dec(&blkg->blkcg->congestion_count);
++		blkcg_dec_congestion_count(blkg->blkcg);
+ 	return 1;
+ }
+ 
+@@ -424,7 +441,7 @@ static inline void blkcg_set_delay(struct blkcg_gq *blkg, u64 delay)
+ 
+ 	/* We only want 1 person setting the congestion count for this blkg. */
+ 	if (!old && atomic_try_cmpxchg(&blkg->use_delay, &old, -1))
+-		atomic_inc(&blkg->blkcg->congestion_count);
++		blkcg_inc_congestion_count(blkg->blkcg);
+ 
+ 	atomic64_set(&blkg->delay_nsec, delay);
+ }
+@@ -441,7 +458,7 @@ static inline void blkcg_clear_delay(struct blkcg_gq *blkg)
+ 
+ 	/* We only want 1 person clearing the congestion count for this blkg. */
+ 	if (old && atomic_try_cmpxchg(&blkg->use_delay, &old, 0))
+-		atomic_dec(&blkg->blkcg->congestion_count);
++		blkcg_dec_congestion_count(blkg->blkcg);
+ }
+ 
+ /**
+diff --git a/include/linux/blk-cgroup.h b/include/linux/blk-cgroup.h
+index dd5841a42c33..58abde49f8c5 100644
+--- a/include/linux/blk-cgroup.h
++++ b/include/linux/blk-cgroup.h
+@@ -14,6 +14,8 @@
+  * 	              Nauman Rafique <nauman@google.com>
+  */
+ 
++#include <linux/atomic.h>
++#include <linux/compiler.h>
+ #include <linux/types.h>
+ 
+ struct bio;
+@@ -24,10 +26,29 @@ struct gendisk;
+ 
+ #ifdef CONFIG_BLK_CGROUP
+ extern struct cgroup_subsys_state * const blkcg_root_css;
++extern atomic_t blkcg_nr_congested;
+ 
+ void blkcg_schedule_throttle(struct gendisk *disk, bool use_memdelay);
+ void blkcg_maybe_throttle_current(void);
+-bool blk_cgroup_congested(void);
++bool __blk_cgroup_congested(void);
++
++/**
++ * blk_cgroup_congested - is the current task in a throttled blkcg?
++ *
++ * Called from mm hot paths where the answer is almost always false, so keep
++ * that case to a load and a branch and only walk the hierarchy out of line
++ * when something in the system really is throttled.
++ *
++ * Return: %true if the current task's blkcg or any of its ancestors is
++ * throttled, %false otherwise.
++ */
++static inline bool blk_cgroup_congested(void)
++{
++	if (likely(!atomic_read(&blkcg_nr_congested)))
++		return false;
++	return __blk_cgroup_congested();
++}
++
+ void blkcg_pin_online(struct cgroup_subsys_state *blkcg_css);
+ void blkcg_unpin_online(struct cgroup_subsys_state *blkcg_css);
+ struct list_head *blkcg_get_cgwb_list(struct cgroup_subsys_state *css);

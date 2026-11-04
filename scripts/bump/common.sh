@@ -10,6 +10,9 @@ LOCK="patches/VENDOR-kernel-org-$SERIES_MM.lock"
 KO="$ROOT/github/kernelorg/linux"            # mainline + `stable` remote
 OUT="$ROOT/out/sweep/$VER"
 PY="${PY:-python3}"
+# Owner rule 2026-11-04: at most 75% of the CPU while building (the workstation is in use). JOBS=N or HYPHAED_JOBS=N overrides.
+JOBS="${JOBS:-${HYPHAED_JOBS:-$(( $(nproc) * 3 / 4 ))}}"; [ "$JOBS" -ge 1 ] || JOBS=1
+export HYPHAED_JOBS="$JOBS"
 # newest build/linux-X.Y.Z strictly below VER, unless PREV is given
 PREV="${PREV:-$(ls build 2>/dev/null | sed -n 's/^linux-\(7\.[0-9.]*\)$/\1/p' \
     | { cat; echo "$VER"; } | sort -uV | sed -n "/^$VER\$/q;p" | tail -1)}"

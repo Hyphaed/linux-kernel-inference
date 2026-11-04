@@ -1,0 +1,48 @@
+From 63963e9a8a44d0e9064e1fe981ff9b8b92aec18a Mon Sep 17 00:00:00 2001
+From: Bohdan Trach <bohdan.trach@huaweicloud.com>
+Date: Mon, 15 Jun 2026 12:03:28 +0200
+Subject: [PATCH 63/78] ext4: avoid RWM atomic in EXT4_MB_GRP_TEST_AND_SET_READ
+
+EXT4_MB_GRP_TEST_AND_SET_READ uses test_and_set_bit function which
+issues an atomic write. This can cause high overhead due to cache
+contention when multiple threads iterate over groups in a tight loop,
+as is the case for ext4_mb_prefetch(). We have seen this to be a
+problem for Kunpeng 920b CPUs which uses a single ARM LSE instruction
+for this purpose.
+
+Avoid this unconditional atomic write by testing the bit first without
+changing its value. This is OK for this use case as this bit is never
+unset.
+
+This change significantly reduces costs of fallocate() operations which
+trigger linear group scans on large multicore machines where
+test_and_set_bit issues an atomic write operation unconditionally.
+
+Signed-off-by: Bohdan Trach <bohdan.trach@huaweicloud.com>
+Reviewed-by: Jan Kara <jack@suse.cz>
+Link: https://patch.msgid.link/20260615100331.163997-2-bohdan.trach@huaweicloud.com
+Signed-off-by: Theodore Ts'o <tytso@mit.edu>
+(cherry picked from commit 0e364a030229b3b06b858dbe4b7412d87d9d86ce)
+---
+ fs/ext4/ext4.h | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/fs/ext4/ext4.h b/fs/ext4/ext4.h
+index 752c0b176213..2099188e0013 100644
+--- a/fs/ext4/ext4.h
++++ b/fs/ext4/ext4.h
+@@ -3643,7 +3643,13 @@ struct ext4_group_info {
+ #define EXT4_MB_GRP_CLEAR_TRIMMED(grp)	\
+ 	(clear_bit(EXT4_GROUP_INFO_WAS_TRIMMED_BIT, &((grp)->bb_state)))
+ #define EXT4_MB_GRP_TEST_AND_SET_READ(grp)	\
+-	(test_and_set_bit(EXT4_GROUP_INFO_BBITMAP_READ_BIT, &((grp)->bb_state)))
++	(ext4_mb_grp_test_and_set_read((grp)))
++
++static inline int ext4_mb_grp_test_and_set_read(struct ext4_group_info *grp)
++{
++	return (test_bit(EXT4_GROUP_INFO_BBITMAP_READ_BIT, &grp->bb_state) ||
++		test_and_set_bit(EXT4_GROUP_INFO_BBITMAP_READ_BIT, &grp->bb_state));
++}
+ 
+ #define EXT4_MAX_CONTENTION		8
+ #define EXT4_CONTENTION_THRESHOLD	2

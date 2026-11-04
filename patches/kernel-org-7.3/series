@@ -1,12 +1,10 @@
 # hyphaed patch series for --source-mode kernel-org --target 7.3 (ordered)
 #
-# Created 2026-10-31 by carrying patches/kernel-org-7.2/series across the
-# 7.2 -> 7.3 bump (ADR-009 round, v7.3.1 = 79a90760). NOT yet validated on
-# v7.3.1: run `SWEEP_ONLY=1 make bump VER=7.3.1`, then stage 30. Every entry
-# below is the 7.2.12 series unchanged until the verdicts doc says otherwise.
-# Entries that fail to apply get ported or dropped with the reason recorded in
-# docs/research/7.3.1-patch-sweep-*.md.
-../custom/0001-cachyos-bore-7.2.patch
+# Carried from kernel-org-7.2 on 2026-10-31, VALIDATED on v7.3.1 on 2026-11-04 (stage 30: sequential
+# git am --3way, 31 touched objects compile). Three entries were re-cut for 7.3: 0001 BORE (CachyOS 7.3 file),
+# 0023 cache_ext (verifier.c/memcontrol/vmscan anchors) and 0024 apparmor userns (needput API).
+# Verdicts and everything rejected: docs/research/7.3.1-patch-sweep-2026-11-04.md.
+../custom/0001-cachyos-bore-7.3.patch
 ../custom/0002-xanmod-vmscan-swappiness-7.2.5.patch
 0003-xanmod-zen-vfs-cache.patch
 0004-xanmod-zen-max-map-count.patch
@@ -27,8 +25,8 @@
 0025-xanmod-mm-workingset-protection.patch
 0026-xanmod-kbuild-extmod-sign-config.patch
 0027-xanmod-kbuild-deb-dbg-optin.patch
-../custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch
-../custom/0024-apparmor-restrict-unprivileged-userns.patch
+../custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.3.patch
+../custom/0024-apparmor-restrict-unprivileged-userns-7.3.patch
 ../custom/0028-apparmor-userns-sfs-advertise.patch
 ../custom/0029-x86-pci-single-node-root-bus-node.patch
 ../custom/0030-pci-skip-futile-retrain-on-empty-port.patch

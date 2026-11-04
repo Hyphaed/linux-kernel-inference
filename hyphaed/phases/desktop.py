@@ -55,7 +55,7 @@ def _flags(march: str = "native") -> dict:
         "DEB_CFLAGS_MAINT_APPEND": opt,
         "DEB_CXXFLAGS_MAINT_APPEND": opt,
         "DEB_LDFLAGS_MAINT_APPEND": opt,
-        "DEB_BUILD_OPTIONS": f"nocheck parallel={os.cpu_count() or 8}",
+        "DEB_BUILD_OPTIONS": f"nocheck parallel={__import__('hyphaed.phases.build', fromlist=['_build_jobs'])._build_jobs()}",
     }
 
 

@@ -1,0 +1,49 @@
+From 31b6adbceb94c29971a696169903c6833891252a Mon Sep 17 00:00:00 2001
+From: Keith Busch <kbusch@kernel.org>
+Date: Tue, 22 Sep 2026 10:27:11 -0700
+Subject: [PATCH 55/78] blk-mq: allow cached requests to be used for flush
+ operations
+
+The cached request lookups reject a request whose op_is_flush() state does
+not match the incoming operation. That check is from when rq->elv and
+rq->flush shared a union, so a request could not be both a scheduler
+request and carry flush state. Commit be4c427809b0 ("blk-mq: use the I/O
+scheduler for writes from the flush state machine") made them separate
+members of struct request.
+
+A cached request now gets its scheduler state when it is claimed by an
+operation, so one claimed for a flush is set up exactly as a freshly
+allocated request. Drop the check so a cached batch can mix flush and
+non-flush operations.
+
+Signed-off-by: Keith Busch <kbusch@kernel.org>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Link: https://patch.msgid.link/20260922172711.1573186-2-kbusch@meta.com
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+(cherry picked from commit 9d2c70986bb7838c1c441a93bda415eecb52f3dd)
+---
+ block/blk-mq.c | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 3be2dd4d9001..278a2ebb839a 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -661,8 +661,6 @@ static struct request *blk_mq_alloc_cached_request(struct request_queue *q,
+ 
+ 		if (blk_mq_get_hctx_type(opf) != rq->mq_hctx->type)
+ 			return NULL;
+-		if (op_is_flush(rq->cmd_flags) != op_is_flush(opf))
+-			return NULL;
+ 
+ 		rq_list_pop(&plug->cached_rqs);
+ 		rq->cmd_flags = opf;
+@@ -3075,8 +3073,6 @@ static struct request *blk_mq_get_cached_request(struct blk_plug *plug,
+ 	if (type != rq->mq_hctx->type &&
+ 	    (type != HCTX_TYPE_READ || rq->mq_hctx->type != HCTX_TYPE_DEFAULT))
+ 		return NULL;
+-	if (op_is_flush(rq->cmd_flags) != op_is_flush(opf))
+-		return NULL;
+ 	rq_list_pop(&plug->cached_rqs);
+ 	return rq;
+ }

@@ -3,7 +3,7 @@
 # unchanged 7.2 patch FILE hashes until a patch is re-anchored for 7.3.
 # Not yet validated on v7.3.1 (see series header).
 
-../custom/0001-cachyos-bore-7.2.patch                       file://$KI_ROOT/patches/custom/0001-cachyos-bore-7.2.patch                          61b9543e400d6fb38a68ee2276538ae14834bec75d7b06d3e1ac9977174ff619  local-file
+../custom/0001-cachyos-bore-7.3.patch                       file://$KI_ROOT/patches/custom/0001-cachyos-bore-7.3.patch                          0dc01c90448559d5f00adf93e63ba7266ad873d7ab8855e435410b77c44c4bca  local-file
 ../custom/0002-xanmod-vmscan-swappiness-7.2.5.patch         file://$KI_ROOT/patches/custom/0002-xanmod-vmscan-swappiness-7.2.5.patch           c4e5f45817222df5bc93d6166503e25bdb8bb9cb51749e5c27271897780135ca  local-file
 0003-xanmod-zen-vfs-cache.patch                                git+file://$KI_ROOT/linux@7ac91c5588e7                                              af1a0b1c26a3007dfa6a30853cb958350a311ac4d5d4b94248f5feb2d83deff9  git-commit
 0004-xanmod-zen-max-map-count.patch                            git+file://$KI_ROOT/linux@ed2a9eca2135                                              096e4f345903c7e7b3b75a7c1d868b2a491469a47163f71ec091a98ca4f314b4  git-commit
@@ -24,8 +24,8 @@
 0025-xanmod-mm-workingset-protection.patch                     git+file://$KI_ROOT/linux@80af49bc67fa                                              717bdb76bbff976603d54112b6efbd9fc728ac5f4588b2255868c6f0961d1dfa  git-commit
 0026-xanmod-kbuild-extmod-sign-config.patch                    git+file://$KI_ROOT/linux@19e5ebe24766                                              3016c3f798ec0b0e587c695fc5ac253075492db315e2d014a0df9b6fa14e5758  git-commit
 0027-xanmod-kbuild-deb-dbg-optin.patch                         git+file://$KI_ROOT/linux@c9d752c21d51                                              3ca940b1080248bc91c7e806a77550e106afa696373440c85f05ebf207259610  git-commit
-../custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch  file://$KI_ROOT/patches/custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch  941a4a3e4c6dad8f3883c4022392b734a908127e1ec3df11a741b042c97e9484  local-file
-../custom/0024-apparmor-restrict-unprivileged-userns.patch     file://$KI_ROOT/patches/custom/0024-apparmor-restrict-unprivileged-userns.patch     07b7f7be849ef8faf6dbbf87f576837c08961d74614dd33a98d89e32660761ec  local-file
+../custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.3.patch  file://$KI_ROOT/patches/custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.3.patch  318144072229e8da1b6634f1973b60a268e91b94ea529c5a34855257c26a73ab  local-file
+../custom/0024-apparmor-restrict-unprivileged-userns-7.3.patch     file://$KI_ROOT/patches/custom/0024-apparmor-restrict-unprivileged-userns-7.3.patch     3b346ced3c136f6605fdf342ebe983b371f19895a0751e1ce1784d1282478d41  local-file
 
 ../custom/0028-apparmor-userns-sfs-advertise.patch          file://$KI_ROOT/patches/custom/0028-apparmor-userns-sfs-advertise.patch          d2a0a34d36edf5071bd29a224b1ecdec029c4285bb4f0d9964044b3065f3af05  local-file
 

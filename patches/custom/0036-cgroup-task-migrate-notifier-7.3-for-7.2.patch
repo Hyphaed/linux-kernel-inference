@@ -1,0 +1,300 @@
+From 9f085a914bc477af60e74f6953bcf832ccf012f4 Mon Sep 17 00:00:00 2001
+From: Ferran Duarri <ferran.duarri@me.com>
+Date: Wed, 4 Nov 2026 09:58:20 +0100
+Subject: [PATCH 36/38] cgroup: add the v7.3 task-migrate notifier and
+ cpuset_num_cpus()
+
+Backport of what the 7.3 scheduler code needs from the cgroup side: a blocking notifier
+chain fired around cgroup task migration (CGROUP_TASK_MIGRATING, _MIGRATED,
+_MIGRATE_CANCELED, data = struct cgroup_task_migrate_ctx) and cgroup_common_ancestor() for
+sched_ext's sub-schedulers, and cpuset_num_cpus() for the fair class's cgroup_mode.
+Taken from v7.3.1 as the hunks that mention those; unrelated v7.3 edits (data_race() in
+the PF_EXITING check, a stray semicolon, the cpuset attach rework) are left out. The
+notifier changes nothing until something registers on the chain.
+
+Forward-Port-Notes: include/linux/cgroup.h kernel/cgroup/cgroup.c  include/linux/cpuset.h kernel/cgroup/cpuset.c
+Experimental: ADR-009, series.sched73 only.
+
+Signed-off-by: Ferran Duarri <ferran.duarri@me.com>
+Assisted-by: Claude:claude-opus-5
+---
+ include/linux/cgroup.h | 47 +++++++++++++++++++++
+ include/linux/cpuset.h |  6 +++
+ kernel/cgroup/cgroup.c | 93 ++++++++++++++++++++++++++++++++++++++----
+ kernel/cgroup/cpuset.c | 22 ++++++++++
+ 4 files changed, 159 insertions(+), 9 deletions(-)
+
+diff --git a/include/linux/cgroup.h b/include/linux/cgroup.h
+index f2aa46a4f..94e90e3b1 100644
+--- a/include/linux/cgroup.h
++++ b/include/linux/cgroup.h
+@@ -82,12 +82,38 @@ enum cgroup_lifetime_events {
+ 	CGROUP_LIFETIME_OFFLINE,
+ };
+ 
++/*
++ * Events on cgroup_task_notifier, data is struct cgroup_task_migrate_ctx.
++ * MIGRATING fires per task before the migration commits and an error return
++ * from the chain fails the migration, in which case tasks that were already
++ * notified receive MIGRATE_CANCELED. MIGRATED fires per task after the
++ * migration is committed and can't fail. Only migrations that change a task's
++ * dfl cgroup are reported.
++ */
++enum cgroup_task_events {
++	CGROUP_TASK_MIGRATING,
++	CGROUP_TASK_MIGRATED,
++	CGROUP_TASK_MIGRATE_CANCELED,
++};
++
++/*
++ * @src_dcgrp and @dst_dcgrp are @task's dfl cgroups before and after the
++ * migration. @src_dcgrp is NULL for CGROUP_TASK_MIGRATED as per-task sources
++ * are not tracked past the commit point.
++ */
++struct cgroup_task_migrate_ctx {
++	struct task_struct	*task;
++	struct cgroup		*src_dcgrp;
++	struct cgroup		*dst_dcgrp;
++};
++
+ extern struct file_system_type cgroup_fs_type;
+ extern struct cgroup_root cgrp_dfl_root;
+ extern struct css_set init_css_set;
+ extern struct mutex cgroup_mutex;
+ extern spinlock_t css_set_lock;
+ extern struct blocking_notifier_head cgroup_lifetime_notifier;
++extern struct blocking_notifier_head cgroup_task_notifier;
+ 
+ #define SUBSYS(_x) extern struct cgroup_subsys _x ## _cgrp_subsys;
+ #include <linux/cgroup_subsys.h>
+@@ -623,6 +649,27 @@ static inline struct cgroup *cgroup_ancestor(struct cgroup *cgrp,
+ 	return cgrp->ancestors[ancestor_level];
+ }
+ 
++/**
++ * cgroup_common_ancestor - find common ancestor of two cgroups
++ * @a: first cgroup to find common ancestor of
++ * @b: second cgroup to find common ancestor of
++ *
++ * Find the first cgroup that is an ancestor of both @a and @b, if it exists
++ * and return a pointer to it. If such a cgroup doesn't exist, return NULL.
++ *
++ * This function is safe to call as long as both @a and @b are accessible.
++ */
++static inline struct cgroup *cgroup_common_ancestor(struct cgroup *a,
++						    struct cgroup *b)
++{
++	int level;
++
++	for (level = min(a->level, b->level); level >= 0; level--)
++		if (a->ancestors[level] == b->ancestors[level])
++			return a->ancestors[level];
++	return NULL;
++}
++
+ /**
+  * task_under_cgroup_hierarchy - test task's membership of cgroup ancestry
+  * @task: the task to be tested
+diff --git a/include/linux/cpuset.h b/include/linux/cpuset.h
+index bf3999daa..db2a4d7cf 100644
+--- a/include/linux/cpuset.h
++++ b/include/linux/cpuset.h
+@@ -83,6 +83,7 @@ extern bool cpuset_cpus_allowed_fallback(struct task_struct *p);
+ extern nodemask_t cpuset_mems_allowed(struct task_struct *p);
+ #define cpuset_current_mems_allowed (current->mems_allowed)
+ void cpuset_init_current_mems_allowed(void);
++extern int cpuset_num_cpus(struct cgroup *cgroup);
+ int cpuset_nodemask_valid_mems_allowed(nodemask_t *nodemask);
+ 
+ extern bool cpuset_current_node_allowed(int node, gfp_t gfp_mask);
+@@ -224,6 +225,11 @@ static inline nodemask_t cpuset_mems_allowed(struct task_struct *p)
+ #define cpuset_current_mems_allowed (node_states[N_MEMORY])
+ static inline void cpuset_init_current_mems_allowed(void) {}
+ 
++static inline int cpuset_num_cpus(struct cgroup *cgroup)
++{
++	return num_online_cpus();
++}
++
+ static inline int cpuset_nodemask_valid_mems_allowed(nodemask_t *nodemask)
+ {
+ 	return 1;
+diff --git a/kernel/cgroup/cgroup.c b/kernel/cgroup/cgroup.c
+index af531319e..9ac260826 100644
+--- a/kernel/cgroup/cgroup.c
++++ b/kernel/cgroup/cgroup.c
+@@ -88,6 +88,8 @@ EXPORT_SYMBOL_GPL(css_set_lock);
+ 
+ struct blocking_notifier_head cgroup_lifetime_notifier =
+ 	BLOCKING_NOTIFIER_INIT(cgroup_lifetime_notifier);
++struct blocking_notifier_head cgroup_task_notifier =
++	BLOCKING_NOTIFIER_INIT(cgroup_task_notifier);
+ 
+ DEFINE_SPINLOCK(trace_cgroup_path_lock);
+ char trace_cgroup_path[TRACE_CGROUP_PATH_LEN];
+@@ -2676,14 +2678,27 @@ struct task_struct *cgroup_taskset_next(struct cgroup_taskset *tset,
+ 	return NULL;
+ }
+ 
++static void cgroup_migrate_notify_canceled(struct css_set *src_cset,
++					   struct task_struct *task)
++{
++	struct cgroup_task_migrate_ctx ctx = {
++		.task = task,
++		.src_dcgrp = src_cset->dfl_cgrp,
++		.dst_dcgrp = src_cset->mg_dst_cset->dfl_cgrp,
++	};
++
++	blocking_notifier_call_chain(&cgroup_task_notifier,
++				     CGROUP_TASK_MIGRATE_CANCELED, &ctx);
++}
++
+ /**
+  * cgroup_migrate_execute - migrate a taskset
+  * @mgctx: migration context
+  *
+- * Migrate tasks in @mgctx as setup by migration preparation functions.
+- * This function fails iff one of the ->can_attach callbacks fails and
+- * guarantees that either all or none of the tasks in @mgctx are migrated.
+- * @mgctx is consumed regardless of success.
++ * Migrate tasks in @mgctx as setup by migration preparation functions. This
++ * function fails iff one of the ->can_attach callbacks or CGROUP_TASK_MIGRATING
++ * notifications fails and guarantees that either all or none of the tasks in
++ * @mgctx are migrated. @mgctx is consumed regardless of success.
+  */
+ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
+ {
+@@ -2691,6 +2706,7 @@ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
+ 	struct cgroup_subsys *ss;
+ 	struct task_struct *task, *tmp_task;
+ 	struct css_set *cset, *tmp_cset;
++	bool dfl_migration = false;
+ 	int ssid, failed_ssid, ret;
+ 
+ 	/* check that we can legitimately attach to the cgroup */
+@@ -2707,6 +2723,33 @@ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
+ 		} while_each_subsys_mask();
+ 	}
+ 
++	/*
++	 * Notify each task about the impending migration. An error return fails
++	 * the migration. Only migrations on the default hierarchy are reported:
++	 * a migration modifies either every moved task's dfl cgroup or, on
++	 * cgroup1 or for subtree_control writes, none.
++	 */
++	list_for_each_entry(cset, &tset->src_csets, mg_node) {
++		if (cset->dfl_cgrp == cset->mg_dst_cset->dfl_cgrp)
++			continue;
++		dfl_migration = true;
++		list_for_each_entry(task, &cset->mg_tasks, cg_list) {
++			struct cgroup_task_migrate_ctx ctx = {
++				.task = task,
++				.src_dcgrp = cset->dfl_cgrp,
++				.dst_dcgrp = cset->mg_dst_cset->dfl_cgrp,
++			};
++
++			ret = blocking_notifier_call_chain_robust(&cgroup_task_notifier,
++								  CGROUP_TASK_MIGRATING,
++								  CGROUP_TASK_MIGRATE_CANCELED,
++								  &ctx);
++			ret = notifier_to_errno(ret);
++			if (ret)
++				goto out_cancel_migrating;
++		}
++	}
++
+ 	/*
+ 	 * Now that we're guaranteed success, proceed to move all tasks to
+ 	 * the new cgroup.  There are no failure cases after here, so this
+@@ -2750,9 +2793,41 @@ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
+ 		} while_each_subsys_mask();
+ 	}
+ 
++	/*
++	 * Notify each task after successful migration. The operation can no
++	 * longer fail and the return value is ignored. The MIGRATING loop
++	 * above explains why only dfl migrations are reported. Per-task
++	 * sources are not tracked past the commit point, so src_dcgrp is
++	 * NULL.
++	 */
++	if (dfl_migration) {
++		list_for_each_entry(cset, &tset->dst_csets, mg_node) {
++			list_for_each_entry(task, &cset->mg_tasks, cg_list) {
++				struct cgroup_task_migrate_ctx ctx = {
++					.task = task,
++					.dst_dcgrp = cset->dfl_cgrp,
++				};
++
++				blocking_notifier_call_chain(
++					&cgroup_task_notifier,
++					CGROUP_TASK_MIGRATED, &ctx);
++			}
++		}
++	}
++
+ 	ret = 0;
+ 	goto out_release_tset;
+ 
++out_cancel_migrating:
++	list_for_each_entry_continue_reverse(task, &cset->mg_tasks, cg_list)
++		cgroup_migrate_notify_canceled(cset, task);
++	list_for_each_entry_continue_reverse(cset, &tset->src_csets, mg_node) {
++		if (cset->dfl_cgrp == cset->mg_dst_cset->dfl_cgrp)
++			continue;
++		list_for_each_entry_reverse(task, &cset->mg_tasks, cg_list)
++			cgroup_migrate_notify_canceled(cset, task);
++	}
++	failed_ssid = CGROUP_SUBSYS_COUNT;
+ out_cancel_attach:
+ 	if (tset->nr_tasks) {
+ 		do_each_subsys_mask(ss, ssid, mgctx->ss_mask) {
+@@ -2976,11 +3051,11 @@ int cgroup_migrate_prepare_dst(struct cgroup_mgctx *mgctx)
+  * cgroup_migrate_prepare_dst() on the targets before invoking this
+  * function and following up with cgroup_migrate_finish().
+  *
+- * As long as a controller's ->can_attach() doesn't fail, this function is
+- * guaranteed to succeed.  This means that, excluding ->can_attach()
+- * failure, when migrating multiple targets, the success or failure can be
+- * decided for all targets by invoking group_migrate_prepare_dst() before
+- * actually starting migrating.
++ * As long as a controller's ->can_attach() or a CGROUP_TASK_MIGRATING
++ * notification doesn't fail, this function is guaranteed to succeed.  This
++ * means that, excluding those failures, when migrating multiple targets,
++ * the success or failure can be decided for all targets by invoking
++ * group_migrate_prepare_dst() before actually starting migrating.
+  */
+ int cgroup_migrate(struct task_struct *leader, bool threadgroup,
+ 		   struct cgroup_mgctx *mgctx)
+diff --git a/kernel/cgroup/cpuset.c b/kernel/cgroup/cpuset.c
+index 501f12de5..cd601e270 100644
+--- a/kernel/cgroup/cpuset.c
++++ b/kernel/cgroup/cpuset.c
+@@ -4182,6 +4182,28 @@ bool cpuset_cpus_allowed_fallback(struct task_struct *tsk)
+ 	return changed;
+ }
+ 
++/*
++ * Returns the number of CPUs available for this cgroup.
++ *
++ * This only really works for cgroup-v2 where all the controllers are mounted
++ * in the same hierarchy. If not cgroup-v2 or no cpuset controller is
++ * configured it reverts to num_online_cpus().
++ */
++int cpuset_num_cpus(struct cgroup *cgrp)
++{
++	int nr = num_online_cpus();
++	struct cpuset *cs;
++
++	if (is_in_v2_mode()) {
++		guard(rcu)();
++		cs = css_cs(cgroup_e_css(cgrp, &cpuset_cgrp_subsys));
++		if (cs)
++			nr = cpumask_weight(cs->effective_cpus);
++	}
++
++	return nr;
++}
++
+ void __init cpuset_init_current_mems_allowed(void)
+ {
+ 	nodes_setall(current->mems_allowed);

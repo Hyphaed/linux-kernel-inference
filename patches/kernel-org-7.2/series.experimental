@@ -3,3 +3,60 @@
 # Same format as `series`. A patch lives here until the two-run A/B (hyphaed/round.py)
 # shows a measured gain, then it moves to `series`; otherwise it is dropped and the
 # result recorded in docs/research/. Nothing here goes upstream without ADR-004 evidence.
+# 2026-11-04 (7.2.15): Intel hybrid/SMT scheduler work from mainline v7.3. Neri's 6-patch series: 2 of 6 are already in 7.2
+# (balancing_at_rd gate, capacity check order), the other 4 apply. Inert on the 14900KF while SMT is on (no SD_ASYM_CPUCAPACITY).
+../custom/0031-sched-fair-smt-busy-sibling-capacity-7.2.patch
+../custom/0032-sched-fair-misfit-dst-cpu-capacity-7.2.patch
+../custom/0033-sched-fair-lb-identical-capacity-clusters-7.2.patch
+../custom/0034-sched-topology-prefer-sibling-asym-7.2.patch
+../custom/0035-sched-fair-nohz-prefer-idle-core-7.2.patch
+#
+# 2026-11-04 (7.2.15): mainline v7.3 performance commits that apply to 7.2.15 + the default series, picked by
+# scripts/bump/22-perf-candidates.py + 22b-perf-apply-test.py, curated by hand, and compile-checked as one stack
+# (39 commits, 23 touched objects). Original authors and sign-offs preserved ("cherry picked from commit" line).
+# Verdicts and what was rejected: docs/research/7.2.15-perf-backports-2026-11-04.md. None measured on this box yet.
+# With HYPHAED_SERIES_VARIANT=sched73 comment out the PSI patch: the variant's 7.3 psi.c already contains it.
+#
+# Tier A: small, reviewed, self-contained.
+../custom/perf73/0040-mm-entirely-remove-lru_add_drain-in-do_swap_page.patch
+../custom/perf73/0041-mm-avoid-unnecessary-lru-drain-for-wp_can_reuse_anon.patch
+../custom/perf73/0042-mm-swap_state-remove-unnecessary-lru_add_drain-from-.patch
+../custom/perf73/0043-mm-filemap-reduce-unnecessary-xarray-lookups-in-file.patch
+../custom/perf73/0044-mm-filemap-reduce-unnecessary-xarray-lookups-when-re.patch
+../custom/perf73/0045-mm-page_alloc-drop-flag-conversion-optimisation.patch
+../custom/perf73/0046-mm-vmpressure-skip-tree-true-accounting-on-cgroup-v2.patch
+../custom/perf73/0047-mm-zswap-use-ratelimited-stats-flush-in-zswap_shrink.patch
+../custom/perf73/0048-mm-zswap-support-batch-writeback-in-shrink_memcg.patch
+../custom/perf73/0049-mm-memcg-release-the-css-reference-when-a-stock-slot.patch
+../custom/perf73/0050-mm-mglru-fix-young-counter-undercount-for-large-foli.patch
+../custom/perf73/0051-mm-gup-fix-GUP-fast-fallback-for-NULL-mapping-order-.patch
+../custom/perf73/0052-memcg-bail-out-proactive-reclaim-when-memcg-is-dying.patch
+../custom/perf73/0053-memcg-bail-out-memory.max-when-memcg-is-dying.patch
+../custom/perf73/0054-memcg-bail-out-memory.high-when-memcg-is-dying.patch
+../custom/perf73/0055-blk-mq-allow-cached-requests-to-be-used-for-flush-op.patch
+../custom/perf73/0056-block-skip-blkcg-walk-in-blk_cgroup_congested-when-n.patch
+../custom/perf73/0057-futex-Optimise-the-size-check-get_futex_key.patch
+../custom/perf73/0058-x86-runtime-const-Introduce-runtime_const_mask_32.patch
+../custom/perf73/0059-futex-Use-runtime-constants-for-__futex_hash-hot-pat.patch
+../custom/perf73/0060-eventpoll-compute-timer-slack-lazily-in-ep_poll.patch
+../custom/perf73/0061-ext4-skip-overwrite-check-for-aligned-non-extending-.patch
+../custom/perf73/0062-ext4-get-ext4_group_desc-in-ext4_mb_prefetch-only-wh.patch
+../custom/perf73/0063-ext4-avoid-RWM-atomic-in-EXT4_MB_GRP_TEST_AND_SET_RE.patch
+../custom/perf73/0064-kernel-fork-declare-max_threads-__read_mostly.patch
+../custom/perf73/0065-signal-avoid-unconditional-siginfo-copy-in-send_sign.patch
+../custom/perf73/0066-sched-psi-skip-irqtime-accounting-when-no-new-irq-ti.patch
+../custom/perf73/0067-iommu-vt-d-Cache-max-domain-ID-to-avoid-redundant-ca.patch
+#
+# Tier B: validated to apply and compile together, but touches hot or core code (TLB flush, hrtimer, page allocator,
+# maple tree). Disabled by default; uncomment after reading the verdicts doc and only with a boot test.
+# ../custom/perf73/0068-mm-page_alloc-use-existing-highatomic-reserves-on-th.patch
+# ../custom/perf73/0069-hrtimer-Don-t-take-cpu_base-lock-in-hrtimer_get_next.patch
+# ../custom/perf73/0070-x86-mm-Factor-out-flush_tlb_info-initialization.patch
+# ../custom/perf73/0071-x86-mm-Cap-flush_tlb_info-alignment-at-64-bytes.patch
+# ../custom/perf73/0072-x86-mm-Move-flush_tlb_info-back-to-the-stack.patch
+# ../custom/perf73/0073-x86-mm-Re-enable-preemption-before-flush_tlb_multi.patch
+# ../custom/perf73/0074-maple_tree-avoid-extra-gap-calculation.patch
+# ../custom/perf73/0075-maple_tree-add-bulk-parent-set-helper.patch
+# ../custom/perf73/0076-maple_tree-micro-optimisation-of-mas_wr_store_type.patch
+# ../custom/perf73/0077-maple_tree-optimise-mas_wr_node_store-when-not-in-rc.patch
+# ../custom/perf73/0078-maple_tree-use-prefetched-value-in-mas_wr_store_type.patch

@@ -1,0 +1,35 @@
+# Variant series "sched73" for --target 7.2 (ADR-009; opt-in: HYPHAED_SERIES_VARIANT=sched73).
+#
+# The v7.3 scheduler stack on 7.2.15: cgroup task-migrate notifier (0036), sched_ext 7.3 (0037), the single-runqueue EEVDF
+# fair class with cgroup_mode (0038), then the CachyOS 7.3 BORE, which is written against exactly that fair.c. Everything after BORE is the default 7.2 series unchanged.
+# Do NOT also enable series.experimental's 0031-0035: the transplant already contains them.
+# Why and how: docs/research/7.2.15-patch-sweep-2026-11-04.md. Never the default until the two-run A/B (hyphaed/round.py).
+../custom/0036-cgroup-task-migrate-notifier-7.3-for-7.2.patch
+../custom/0037-sched-ext-v7.3-for-7.2.patch
+../custom/0038-sched-v7.3-single-runqueue-for-7.2.patch
+../custom/0001-cachyos-bore-7.3-on-7.2.patch
+../custom/0002-xanmod-vmscan-swappiness-7.2.5.patch
+0003-xanmod-zen-vfs-cache.patch
+0004-xanmod-zen-max-map-count.patch
+0005-xanmod-zen-500hz-timer.patch
+0006-xanmod-zen-dm-crypt-wq.patch
+0007-xanmod-zen-evdev-rcu.patch
+0008-xanmod-blk-wbt-latency.patch
+0009-xanmod-blk-rq-affinity.patch
+0010-xanmod-mq-deadline-front-merge.patch
+0011-xanmod-mq-deadline-write-prio.patch
+0012-tkg-pci-pme-timeout.patch
+0013-nvme-lower-default-apst-latency.patch
+0014-mm-thp-defrag-defer-madvise-default.patch
+0015-kbuild-ubsan-extmod-opt-in.patch
+0018-xanmod-pci-acs-override.patch
+../custom/0019-dma-buf-priority-hint.patch
+../custom/0020-dma-buf-compressed-descriptor.patch
+0025-xanmod-mm-workingset-protection.patch
+0026-xanmod-kbuild-extmod-sign-config.patch
+0027-xanmod-kbuild-deb-dbg-optin.patch
+../custom/0023-mm-bpf-cache-ext-page-cache-eviction-7.2.patch
+../custom/0024-apparmor-restrict-unprivileged-userns.patch
+../custom/0028-apparmor-userns-sfs-advertise.patch
+../custom/0029-x86-pci-single-node-root-bus-node.patch
+../custom/0030-pci-skip-futile-retrain-on-empty-port.patch

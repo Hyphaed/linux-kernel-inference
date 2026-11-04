@@ -1,0 +1,65 @@
+From f8d6529862ec67fe43e5ea2762973057b2ecce58 Mon Sep 17 00:00:00 2001
+From: Bohdan Trach <bohdan.trach@huaweicloud.com>
+Date: Mon, 15 Jun 2026 12:03:29 +0200
+Subject: [PATCH 62/78] ext4: get ext4_group_desc in ext4_mb_prefetch only when
+ necessary
+
+Getting ext4_group_desc structure can contribute to the cost of
+ext4_mb_prefetch() without any need, as most groups fail the
+!EXT4_MB_GRP_TEST_AND_SET_READ check.
+
+Optimize ext4_mb_prefetch by getting the group description only when
+necessary.
+
+The result is further increase in performance of fallocate() system call
+path that triggers ext4_mb_prefetch() via a linear group scan.
+
+Signed-off-by: Bohdan Trach <bohdan.trach@huaweicloud.com>
+Reviewed-by: Jan Kara <jack@suse.cz>
+Reviewed-by: Andreas Dilger <adilger@dilger.ca>
+Link: https://patch.msgid.link/20260615100331.163997-3-bohdan.trach@huaweicloud.com
+Signed-off-by: Theodore Ts'o <tytso@mit.edu>
+(cherry picked from commit a6a1e7e569dcbf3269b731c05189dbc64532e137)
+---
+ fs/ext4/mballoc.c | 21 +++++++++++----------
+ 1 file changed, 11 insertions(+), 10 deletions(-)
+
+diff --git a/fs/ext4/mballoc.c b/fs/ext4/mballoc.c
+index ed1bd00e11cd..06171a11db12 100644
+--- a/fs/ext4/mballoc.c
++++ b/fs/ext4/mballoc.c
+@@ -2861,8 +2861,6 @@ ext4_group_t ext4_mb_prefetch(struct super_block *sb, ext4_group_t group,
+ 
+ 	blk_start_plug(&plug);
+ 	while (nr-- > 0) {
+-		struct ext4_group_desc *gdp = ext4_get_group_desc(sb, group,
+-								  NULL);
+ 		struct ext4_group_info *grp = ext4_get_group_info(sb, group);
+ 
+ 		/*
+@@ -2872,14 +2870,17 @@ ext4_group_t ext4_mb_prefetch(struct super_block *sb, ext4_group_t group,
+ 		 * prefetch once, so we avoid getblk() call, which can
+ 		 * be expensive.
+ 		 */
+-		if (gdp && grp && !EXT4_MB_GRP_TEST_AND_SET_READ(grp) &&
+-		    EXT4_MB_GRP_NEED_INIT(grp) &&
+-		    ext4_free_group_clusters(sb, gdp) > 0 ) {
+-			bh = ext4_read_block_bitmap_nowait(sb, group, true);
+-			if (!IS_ERR_OR_NULL(bh)) {
+-				if (!buffer_uptodate(bh) && cnt)
+-					(*cnt)++;
+-				brelse(bh);
++		if (grp && !EXT4_MB_GRP_TEST_AND_SET_READ(grp) &&
++		    EXT4_MB_GRP_NEED_INIT(grp)) {
++			struct ext4_group_desc *gdp = ext4_get_group_desc(sb, group, NULL);
++
++			if (gdp && ext4_free_group_clusters(sb, gdp) > 0) {
++				bh = ext4_read_block_bitmap_nowait(sb, group, true);
++				if (!IS_ERR_OR_NULL(bh)) {
++					if (!buffer_uptodate(bh) && cnt)
++						(*cnt)++;
++					brelse(bh);
++				}
+ 			}
+ 		}
+ 		if (++group >= ngroups)

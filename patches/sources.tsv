@@ -50,3 +50,7 @@ ubuntu-resolute	https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+g
 intel-lts	https://github.com/intel/linux-intel-lts	HEAD	multi	vendor-tree	intel-cpu	ls	Intel reference LTS tree for Intel platform features (not a production kernel)
 intel-quilt	https://github.com/intel/linux-intel-quilt	HEAD	multi	patch-set	intel-cpu	ls	Intel patch series by feature
 nix-cachyos-kernel	https://github.com/xddxdd/nix-cachyos-kernel	HEAD	multi	patch-set	any	ls	Nix packaging of CachyOS kernels; shows which CachyOS patch sets track each series
+google-bbr	https://github.com/google/bbr	v3	multi	patch-set	any	ls	Google's own BBRv3 tree (v3 branch); swept fork-only by scripts/bump/20-sweep.py
+android-common	https://android.googlesource.com/kernel/common	android18-7.3	7.3	downstream-tree	any	ls	Google GKI (android18-7.3, android-mainline): sched proxy-exec, dma-buf heaps; vendor hooks are phone-only
+chromeos-kernel	https://chromium.googlesource.com/chromiumos/third_party/kernel	HEAD	multi	downstream-tree	any	ls	ChromeOS kernel (ls only: newest series branch is chromeos-6.12 on 2026-11-04, LTS-based, nothing for 7.x)
+pdx86	https://git.kernel.org/pub/scm/linux/kernel/git/pdx86/platform-drivers-x86.git	for-next	-next	subsystem-tree	any	ls	AMD PMF/PMC/HSMP and Intel/HP/ASUS platform drivers
