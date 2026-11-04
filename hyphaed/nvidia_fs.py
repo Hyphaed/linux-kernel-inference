@@ -64,3 +64,20 @@ def nvidia_fs_built_against_wrong_kernel(kver: str) -> str | None:
             if m and m.group(1) != kver:
                 return m.group(1)
     return None
+
+
+def nvidia_fs_dkms_version(dkms_status: str) -> str | None:
+    """Version of nvidia-fs registered with DKMS, from `dkms status` output."""
+    m = re.search(r"^nvidia-fs/([^,:\s]+)", dkms_status, re.M)
+    return m.group(1) if m else None
+
+
+def nvidia_fs_module_missing(kver: str) -> bool:
+    """True when no nvidia-fs.ko exists for `kver`.
+
+    dkms.conf has BUILD_DEPENDS=nvidia and dkms only counts its own nvidia
+    build. Our nvidia is built outside DKMS (extra/nvidia-hyphaed), so a plain
+    `dkms autoinstall` skips nvidia-fs for that kernel (found 2026-11-04 on
+    7.2.15-hyphaed). `dkms install ... --force` is the documented override.
+    """
+    return not list(Path(f"/lib/modules/{kver}").rglob("nvidia-fs.ko*"))

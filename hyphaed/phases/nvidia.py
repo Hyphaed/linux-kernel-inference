@@ -15,6 +15,7 @@ import re
 import shutil
 from pathlib import Path
 
+from ..nvidia_fs import nvidia_fs_dkms_version, nvidia_fs_module_missing
 from ..util import log
 from ..util.prompts import confirm
 from ..util.run import run, run_sudo
@@ -97,7 +98,15 @@ def _procs_on_gpu() -> list[str]:
     return found
 
 
+def _driver_loaded() -> bool:
+    return Path("/proc/driver/nvidia").exists()
+
+
 def _gpu_jobs_clear() -> bool:
+    if not _driver_loaded():
+        # No kernel module loaded (booted a kernel without one): nothing can be using the GPU, and
+        # nvidia-smi's "couldn't communicate with the driver" error must not be read as a running job.
+        return True
     try:
         apps = run(["nvidia-smi", "--query-compute-apps=pid,process_name", "--format=csv,noheader"],
                    check=False, force=True).stdout.strip().splitlines()
@@ -127,7 +136,8 @@ def _cache_valid(cache: Path, cfg: dict) -> bool:
 
 def _build(ctx, cfg: dict, src: Path, kernel_tree: Path, kver: str) -> Path | None:
     """Compile the modules against the target kernel's build tree (the kernel need not be running)."""
-    jobs = str(os.cpu_count() or 8)
+    from .build import _build_jobs   # owner rule 2026-11-04: at most 75% of the CPU while building
+    jobs = str(_build_jobs())
     cc = run(["sed", "-n", "s/^CONFIG_CC_VERSION_TEXT=\"\\(.*\\)\"/\\1/p", str(kernel_tree / ".config")],
              check=False, force=True).stdout.strip()
     log.info(f"kernel compiler: {cc or 'unknown'}; the module is built with plain gcc to match (no LTO/clang)")
@@ -203,6 +213,15 @@ def _restore_apt(ctx) -> None:
         log.err(f"restore failed; run: sudo bash {ctx.repo_root}/diagnostics/nvidia-restore-apt.sh")
 
 
+def _merge_depmod_conf(existing: str, kver: str, modules: list[str]) -> str:
+    """Replace the target kernel's override lines, keep every other kernel's (rollback needs them)."""
+    header = "# hyphaed: optimized NVIDIA modules win over updates/dkms\n"
+    kept = [ln for ln in existing.splitlines()
+            if ln.startswith("override ") and len(ln.split()) >= 3 and ln.split()[2] != kver]
+    new = [f"override {m.replace('-', '_')} {kver} {_EXTRA_DIR}" for m in modules]
+    return header + "\n".join(kept + new) + "\n"
+
+
 def _install(ctx, cfg: dict, src: Path, run_file: Path, kver: str, built: Path) -> None:
     pkgs = _save_rollback(ctx)
     if pkgs:
@@ -235,13 +254,27 @@ def _install(ctx, cfg: dict, src: Path, run_file: Path, kver: str, built: Path) 
     run_sudo(["mkdir", "-p", str(dest)], dry_run=ctx.dry_run)
     for ko in kos:
         run_sudo(["install", "-m", "644", str(ko), str(dest / ko.name)], dry_run=ctx.dry_run)
-    body = "".join(f"override {k.stem.replace('-', '_')} {kver} {_EXTRA_DIR}\n" for k in kos)
-    run_sudo(["tee", str(_DEPMOD_CONF)], input_str="# hyphaed: optimized NVIDIA modules win over updates/dkms\n" + body,
+    existing = _DEPMOD_CONF.read_text() if _DEPMOD_CONF.exists() else ""
+    run_sudo(["tee", str(_DEPMOD_CONF)], input_str=_merge_depmod_conf(existing, kver, [k.stem for k in kos]),
              dry_run=ctx.dry_run)
     run_sudo(["depmod", "-a", kver], dry_run=ctx.dry_run)
     if shutil.which("dkms"):
         for k in sorted(d.name for d in Path("/lib/modules").iterdir() if (d / "build").exists()):
             run_sudo(["dkms", "autoinstall", "-k", k], check=False, dry_run=ctx.dry_run)
+        _install_nvidia_fs(ctx, kver)
+
+
+def _install_nvidia_fs(ctx, kver: str) -> None:
+    """Build nvidia-fs (GDS) for `kver` when DKMS autoinstall skipped it (BUILD_DEPENDS=nvidia, see nvidia_fs.py)."""
+    if not shutil.which("dkms") or not nvidia_fs_module_missing(kver):
+        return
+    ver = nvidia_fs_dkms_version(run(["dkms", "status"], check=False, force=True).stdout or "")
+    if not ver:
+        return
+    r = run_sudo(["dkms", "install", f"nvidia-fs/{ver}", "-k", kver, "--force"], check=False, dry_run=ctx.dry_run)
+    if r.code != 0:
+        log.warn(f"nvidia-fs {ver} did not build for {kver} (GDS stays in POSIX compat mode); "
+                 f"log: /var/lib/dkms/nvidia-fs/{ver}/{kver}/x86_64/log/make.log")
 
 
 def run_phase(ctx) -> None:

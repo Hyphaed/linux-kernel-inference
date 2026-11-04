@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .nvidia_fs import nvidia_fs_built_against_wrong_kernel, nvidia_fs_module_is_truncated
+from .nvidia_fs import (nvidia_fs_built_against_wrong_kernel, nvidia_fs_dkms_version,
+                        nvidia_fs_module_is_truncated, nvidia_fs_module_missing)
 from .util import log
 
 
@@ -438,6 +439,13 @@ def check_nvidia_fs_loaded() -> Check:
             f"NOT loaded — built for {kver} against {wrong_kver}'s nvidia "
             f"symbols, so the CRCs disagree. Fix: sudo bash "
             f"diagnostics/fix-nvidia-fs-symvers.sh"
+        )
+    elif kver and nvidia_fs_module_missing(kver):
+        ver = nvidia_fs_dkms_version(_cmd(["dkms", "status"])) or "<ver>"
+        detail = (
+            f"NOT loaded — nvidia-fs.ko was never built for {kver} (DKMS skips it: "
+            f"BUILD_DEPENDS=nvidia, our nvidia is built outside DKMS). "
+            f"Fix: sudo dkms install nvidia-fs/{ver} -k {kver} --force"
         )
     else:
         detail = "NOT loaded — GDS is in POSIX compat mode"

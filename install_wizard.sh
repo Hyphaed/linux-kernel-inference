@@ -18,7 +18,7 @@ fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
-WIZARD_VERSION="1.0.0"
+WIZARD_VERSION="1.0.1"
 command -v python3 &>/dev/null || { printf 'ERROR: python3 not found\n' >&2; exit 1; }
 
 # ── Colour palette ────────────────────────────────────────────────────────────

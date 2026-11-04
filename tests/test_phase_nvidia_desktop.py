@@ -130,6 +130,7 @@ def test_gpu_job_check_works_without_nvidia_smi(monkeypatch):
     def boom(cmd, **kw):
         raise FileNotFoundError(cmd[0])
     monkeypatch.setattr(nvidia, "run", boom)
+    monkeypatch.setattr(nvidia, "_driver_loaded", lambda: True)
     monkeypatch.setattr(nvidia, "_procs_on_gpu", lambda: ["1, gnome-shell", "2, nautilus"])
     assert nvidia._gpu_jobs_clear() is True
     monkeypatch.setattr(nvidia, "_procs_on_gpu", lambda: ["3, llama-server"])
@@ -147,3 +148,26 @@ def test_no_meson_trim_that_changes_the_packages():
     """Regression: `tests` made dh_install abort (libmutter-test-18), `profiler` dropped cogl_trace_* symbols
     and failed dh_makeshlibs. Add an option here only after a full package build passed with it."""
     assert desktop._TRIM == ()
+
+
+def test_gpu_job_check_passes_when_no_driver_is_loaded(monkeypatch):
+    """Regression 2026-11-04: booted a kernel with no NVIDIA module, nvidia-smi's driver error was read as a running job."""
+    monkeypatch.setattr(nvidia, "_driver_loaded", lambda: False)
+    monkeypatch.setattr(nvidia, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("nvidia-smi must not run")))
+    assert nvidia._gpu_jobs_clear() is True
+
+
+def test_install_nvidia_fs_forces_when_missing(tmp_path, monkeypatch):
+    from hyphaed.util.run import RunResult
+    calls = []
+    monkeypatch.setattr(nvidia.shutil, "which", lambda c: "/usr/bin/dkms")
+    monkeypatch.setattr(nvidia, "run", lambda cmd, **kw: RunResult(0, "nvidia-fs/2.30.2, 7.2.14-hyphaed, x86_64: installed\n", "", "x"))
+    monkeypatch.setattr(nvidia, "run_sudo", lambda cmd, **kw: calls.append(cmd) or RunResult(0, "", "", "x"))
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(nvidia, "nvidia_fs_module_missing", lambda k: True)
+    nvidia._install_nvidia_fs(ctx, "7.2.15-hyphaed")
+    assert calls == [["dkms", "install", "nvidia-fs/2.30.2", "-k", "7.2.15-hyphaed", "--force"]]
+    calls.clear()
+    monkeypatch.setattr(nvidia, "nvidia_fs_module_missing", lambda k: False)
+    nvidia._install_nvidia_fs(ctx, "7.2.15-hyphaed")
+    assert calls == []

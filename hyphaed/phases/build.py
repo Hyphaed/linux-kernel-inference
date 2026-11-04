@@ -270,6 +270,19 @@ def _ensure_build_deps(src: Path) -> None:
         raise RuntimeError("unmet kernel build dependencies")
 
 
+def _build_jobs() -> int:
+    """Parallel jobs for the kernel compile.
+
+    Owner rule 2026-11-04: the workstation is in use while it builds, so a build may take at most 75% of the CPU
+    (24 of 32 threads here). HYPHAED_JOBS overrides (e.g. a deliberate full-speed overnight build).
+    """
+    n = os.cpu_count() or 1
+    env = os.environ.get("HYPHAED_JOBS", "").strip()
+    if env.isdigit() and int(env) > 0:
+        return int(env)
+    return max(1, (n * 3) // 4)
+
+
 def _build_tools_deb(src: Path, pkgver: str, flavour: str, jobs: int) -> Path | None:
     """Build kernel tools (perf, bpftool, cpupower, turbostat, …) and package
     them into linux-hyphaed-tools-{pkgver}_amd64.deb.
@@ -635,7 +648,7 @@ def run_phase(ctx) -> list[Path]:
     log.info(f"flavour suffix:  -{profile.flavour}")
     log.info(f"final uname -r:  {hyphaed_uname_r(profile.running_kernel, profile.flavour, source_mode)}")
 
-    jobs = max(1, (os.cpu_count() or 1))
+    jobs = _build_jobs()
     source_date_epoch = _source_date_epoch(src)
     env = {
         "LOCALVERSION": f"-{profile.flavour}",
@@ -688,7 +701,8 @@ def run_phase(ctx) -> list[Path]:
     log_file = log.log_dir() / f"build-{__import__('datetime').datetime.now():%Y%m%d-%H%M%S}.log"
     log.info(f"build log: {log_file}")
 
-    cmd = ["make", "-j", str(jobs), *extra_make_args, "bindeb-pkg"]
+    # nice 10: the machine is in use while it builds (the job cap alone still lets 24 threads win against interactive work)
+    cmd = ["nice", "-n", "10", "make", "-j", str(jobs), *extra_make_args, "bindeb-pkg"]
     rc = _run_make_with_progress(cmd, src, env, log_file)
     if rc != 0:
         _surface_build_error(log_file)

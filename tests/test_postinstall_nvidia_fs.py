@@ -135,3 +135,15 @@ def test_compressed_module_is_covered(tmp_path, monkeypatch):
     ko.write_bytes(b"")
     _patch_modules_root(monkeypatch, tmp_path, "7.1.10-hyphaed")
     assert nvidia_fs_module_is_truncated("7.1.10-hyphaed") == ko
+
+
+def test_dkms_version_parse_and_missing(tmp_path, monkeypatch):
+    from hyphaed.nvidia_fs import nvidia_fs_dkms_version, nvidia_fs_module_missing
+    out = "nvidia/615.78.08: added\nnvidia-fs/2.30.2, 7.2.14-hyphaed, x86_64: installed\n"
+    assert nvidia_fs_dkms_version(out) == "2.30.2"
+    assert nvidia_fs_dkms_version("greenboost/3.5: added\n") is None
+    monkeypatch.setattr("hyphaed.nvidia_fs.Path", lambda p: tmp_path)
+    assert nvidia_fs_module_missing("x")
+    (tmp_path / "updates").mkdir()
+    (tmp_path / "updates" / "nvidia-fs.ko").write_bytes(b"x")
+    assert not nvidia_fs_module_missing("x")

@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.0.1 (2026-11-04)
+
+### `nvidia_fs` never got built for the new kernel
+
+On 7.2.15-hyphaed `nvidia-fs.ko` didn't exist, so `nvidia-fs-load.service`
+failed at boot and GPUDirect Storage ran in POSIX compat mode (every NVMe to GPU
+byte crossing PCIe twice). `hyphaed verify` showed two red rows for one cause.
+
+nvidia-fs's `dkms.conf` has `BUILD_DEPENDS=nvidia`, and DKMS only counts its own
+nvidia build. Ours is built outside DKMS since 2026-10-31, so `dkms autoinstall`
+quietly skipped nvidia-fs, and the nvidia phase ran it with `check=False`. The
+`nvidia` phase now follows the autoinstall loop with
+`dkms install nvidia-fs/<ver> -k <kver> --force` when no `nvidia-fs.ko` exists for
+the target kernel, and warns with the `make.log` path if that build fails.
+`hyphaed verify` names the cause instead of a bare "NOT loaded".
+
+Checked on the box: the forced build signed and installed the module, it loaded
+against our `nvidia`, and `hyphaed verify` went to 24/24 green. Not covered: the
+phase hook itself hasn't run end to end on a real bump yet, only in unit tests.
+Manual fix if it ever happens again:
+`sudo dkms install nvidia-fs/2.30.2 -k <kver> --force`.
+
+### Smaller nvidia phase fixes
+
+- Installing a second kernel's NVIDIA modules overwrote `depmod.d`, deleting the
+  override lines for the first one, which rollback needs. They're merged per
+  kernel now.
+- Booting a kernel with no NVIDIA module made `nvidia-smi`'s driver error read as
+  a running GPU job, blocking the phase. No driver means nothing can be on the GPU.
+- The module build used every CPU thread; it follows the 75% build cap like the
+  kernel build.
+
 ## 1.0.0 (2026-11-02)
 
 First tagged release. Before this the version string said 0.1.0 and nothing was

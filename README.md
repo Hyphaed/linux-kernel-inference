@@ -153,7 +153,8 @@ been validated, or run `hyphaed list-versions` to see the last five with dates.
 `make bump VER=<x.y.z>` runs the whole re-runnable bump pipeline.
 
 The last three phases run after `install` and are separate from the kernel:
-`nvidia` builds the open modules from a pinned checkout, `desktop` rebuilds
+`nvidia` builds the open modules from a pinned checkout (and builds `nvidia-fs`
+for GPUDirect Storage, which DKMS skips on its own), `desktop` rebuilds
 mutter and gnome-shell for this host and keeps the result only if it measures
 no worse, and `proton` keeps the Steam compatibility tools current.
 
