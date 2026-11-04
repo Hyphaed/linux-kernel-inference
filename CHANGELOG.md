@@ -2,6 +2,79 @@
 
 ## 1.0.1 (2026-11-04)
 
+### 7.2.15: the default series, and an experimental set that is not measured
+
+The default `kernel-org-7.2` series applies unchanged on v7.2.15 (sequential
+`git am --3way`, 32 touched objects compiled). This box now boots
+`7.2.15-hyphaed` built from it plus `series.experimental`, and `hyphaed verify`
+is green. That proves the kernel boots and every patch reaches the machine. It
+doesn't prove any of the experimental patches makes anything faster: there is no
+A/B yet, so none of them is in the default series.
+
+`series.experimental` now carries two groups (ADR-009):
+
+- `0031`-`0035`, Intel's hybrid-core load-balancing fixes from 7.3, re-cut for
+  7.2. Two of the six upstream patches are already in 7.2.15. They are inert on
+  the 14900KF (SMT keeps ITMT), so expect no change here; they exist for the P/E
+  topology and for the laptop's successors.
+- 28 commits from 7.3 under `patches/custom/perf73/`, picked from 474 that claim a
+  performance effect (302 apply cleanly, 171 conflict). They're small, reviewed
+  and self-contained; 5 more were dropped because they need other 7.3 code the
+  compiler found. 11 more validate but stay commented out.
+
+One thing worth knowing before reading the list: `scx_bpfland` runs here with
+`switch_all=1`, so every normal task is scheduled by sched_ext, not the fair
+class. Fair-class backports change nothing for day-to-day load while that service
+runs. Reasoning and the full table: `docs/research/7.2.15-perf-backports-2026-11-04.md`
+and `docs/research/7.2.15-patch-sweep-2026-11-04.md`.
+
+### A scheduler swap that can't be expressed as "append to the series"
+
+`patches/kernel-org-7.2/series.sched73` puts the 7.3 scheduler stack on 7.2.15
+(cgroup task-migrate notifier `0036`, sched_ext `0037`, the single-runqueue EEVDF
+fair class `0038`, then CachyOS's 7.3 BORE, which is written against exactly that
+`fair.c`). `HYPHAED_SERIES_VARIANT=sched73` selects it and the patch phase fails
+loudly if the named file doesn't exist. It validates and the full `vmlinux`
+links. It has not been built into a package or booted, and the fair-class part
+buys little while `scx_bpfland` owns normal tasks. Don't also enable
+`0031`-`0035`: the transplant already contains them.
+
+### The 7.3 series was a copy of 7.2.12 that had never run
+
+Run on v7.3.1 it failed at the first patch. Three of the 26 patches needed work,
+the other 23 applied unchanged: BORE is replaced by CachyOS's own 7.3 file (with
+one hunk re-cut because vanilla lacks `CONFIG_CACHY`), and `0023` cache_ext and
+`0024` AppArmor userns were re-anchored (`custom/*-7.3.patch`). It applies and
+compiles (31 objects); it has not been booted, and whether the cache_ext hooks
+fire is still unproven. Notes: `docs/research/7.3.1-patch-sweep-2026-11-04.md`.
+
+### Bump pipeline: five new stages, and builds stop eating the machine
+
+- `22-perf-candidates.py` lists donor-release commits missing from the target
+  stable tag (`git cherry`, so a commit stable already backported is dropped),
+  filtered to subsystems this box runs and ranked by how plainly they claim a
+  speedup. `22b-perf-apply-test.py` then cherry-picks each onto the target plus
+  the default series. Neither decides anything; a human writes the verdicts.
+- `35-nvidia-compile-check.sh` compiles the pinned NVIDIA open driver against the
+  new kernel's headers, so a driver that breaks on a release candidate shows up
+  before the build instead of in the `nvidia` phase after it. It can't prove
+  link-time symbols; only the real phase does.
+- `36-qemu-smoke-test.sh` boots a kernel under QEMU/KVM with a busybox initramfs,
+  loads the host's real `scx_bpfland`, then runs futex/epoll/mmap/signal/fork/
+  memcg stress. 7.2.15 passed three times. It's a VM: no NVIDIA, NVMe or DKMS,
+  and its throughput numbers aren't performance evidence (`mmap` was about 7%
+  lower than 7.2.14 with barely overlapping ranges, n=3; worth watching, not a
+  finding).
+- `61-first-boot-health.sh` prints PASS/WARN/FAIL right after booting a new
+  kernel and a rollback hint. `scripts/prune-kernels.sh` keeps one hyphaed build
+  and the newest stock `-generic` and removes the rest (dry run unless
+  `--apply`).
+- Builds were using all 32 threads while the workstation was in use. The kernel
+  build, the package step and the NVIDIA module build now take 75% of the CPU
+  (`HYPHAED_JOBS=N` overrides) and the kernel `make` runs at `nice -n 10`.
+- `run-all.sh` keeps the validation tree for stage 35, then deletes it. The
+  `--target` default in `hyphaed/cli.py` moves from 7.2.10 to 7.2.15.
+
 ### `nvidia_fs` never got built for the new kernel
 
 On 7.2.15-hyphaed `nvidia-fs.ko` didn't exist, so `nvidia-fs-load.service`
@@ -136,4 +209,4 @@ bumped.
 
 ### Verification
 
-`python -m pytest tests/ -q` → 719 passed, 8 skipped.
+`python -m pytest tests/ -q` → 719 passed, 8 skipped (751 passed as of 1.0.1).

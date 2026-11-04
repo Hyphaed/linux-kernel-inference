@@ -16,7 +16,7 @@ def test_mode_detection():
 
 def test_default_target_is_the_bump():
     from hyphaed.cli import build_parser
-    assert build_parser().parse_args([]).target == "7.2.10"
+    assert build_parser().parse_args([]).target == "7.2.15"
 
 
 def test_spread_carries_n_and_empty_is_not_zero():

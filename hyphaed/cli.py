@@ -56,11 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-y", "--yes", action="store_true", help="auto-accept non-hard prompts")
     p.add_argument("--preset", default="auto", help=f"preset name (default: auto — detected from hardware). Available: {','.join(presets.list_available()) or 'none'}")
     p.add_argument("--phase", choices=phases.ORDER + ["all"], default="all", help="run a single phase (default: all)")
-    # Default target as of 2026-10-12: kernel.org 7.2.10 stable. A bare `hyphaed` is
+    # Default target as of 2026-11-04: kernel.org 7.2.15 stable. A bare `hyphaed` is
     # the two-run flow in hyphaed/round.py: run 1 captures the baseline, bumps, builds
     # and installs; after the reboot run 2 audits, captures B and writes the A/B report.
     # Bump this default only after `make bump VER=<x.y.z>` validated the series on it.
-    p.add_argument("--target", default="7.2.10", help="target kernel.org stable version, e.g. 7.2.10. Bump this default after validating a newer kernel.org stable release, or run `hyphaed list-versions` to see the last 5 releases with dates.")
+    p.add_argument("--target", default="7.2.15", help="target kernel.org stable version, e.g. 7.2.15. Bump this default after validating a newer kernel.org stable release, or run `hyphaed list-versions` to see the last 5 releases with dates.")
     p.add_argument(
         "--source-mode", choices=["kernel-org"], default="kernel-org",
         help="kernel.org is the only source: clones the stable tag given by --target from the "

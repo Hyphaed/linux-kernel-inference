@@ -1,7 +1,7 @@
 [![Kernel](https://img.shields.io/badge/kernel.org-7.1.x%20%7C%207.2.x-orange.svg)](https://kernel.org/)
 [![Tested on](https://img.shields.io/badge/running-7.2.14--hyphaed-green.svg)](https://ubuntu.com/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-yellow.svg)](https://python.org/)
-[![Tests](https://img.shields.io/badge/tests-719%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-751%20passing-brightgreen.svg)](tests/)
 [![License: GPL v2](https://img.shields.io/badge/license-GPL--2.0-red.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 
 # 🐧 Hyphaed Kernel
@@ -119,6 +119,8 @@ patches/
   kernel-org-7.2/series    active series for kernel.org 7.2.x (current default)
   kernel-org-7.3/series    staged for 7.3.x: applies and compiles, not booted yet
   kernel-org-7.2/series.experimental  unmeasured patches, applied only with --experimental
+  kernel-org-7.2/series.sched73       opt-in variant: the 7.3 scheduler stack on 7.2
+                           (HYPHAED_SERIES_VARIANT=sched73), not booted
   custom/                  original work and forward-ports, including the six above
   VENDOR-kernel-org-*.lock every source pinned by sha256
   fetch.py                 populate from the pinned local sources
@@ -131,7 +133,7 @@ diagnostics/               dry-run-by-default scripts for real hardware issues
                            found on this box (NVIDIA driver track switching,
                            GDS symvers mismatches, boot repairs, DGX-OS parity)
 docs/                      research notes, patch planning, boot audits
-tests/                     719 tests; tests/kernel_runtime/ reads the
+tests/                     751 tests; tests/kernel_runtime/ reads the
                            actually-running kernel and skips itself on anything
                            that isn't a -hyphaed build
 ```
@@ -146,11 +148,15 @@ python -m hyphaed install       # dpkg -i + GRUB drop-in + DKMS + smoke checks
 ```
 
 `install_wizard.sh` walks the whole thing interactively if you'd rather be
-asked than remember flags. `--target` defaults to `7.2.10` in `hyphaed/cli.py`;
-pass `--target 7.2.14` for the version this box boots now (`uname -r` reads
-`7.2.14-hyphaed`). Bump the default once a newer kernel.org stable release has
+asked than remember flags. `--target` defaults to `7.2.15` in `hyphaed/cli.py`,
+the version this box boots now (`uname -r` reads `7.2.15-hyphaed`). Bump the default once a newer kernel.org stable release has
 been validated, or run `hyphaed list-versions` to see the last five with dates.
-`make bump VER=<x.y.z>` runs the whole re-runnable bump pipeline.
+`make bump VER=<x.y.z>` runs the whole re-runnable bump pipeline, including a
+NVIDIA-driver compile check against the new headers; `scripts/bump/36-qemu-smoke-test.sh`
+boots a built kernel in QEMU/KVM before it touches the real machine, and
+`scripts/bump/61-first-boot-health.sh` answers "keep this as the default?" after
+the first real boot. Builds take 75% of the CPU and run niced
+(`HYPHAED_JOBS=N` to override).
 
 The last three phases run after `install` and are separate from the kernel:
 `nvidia` builds the open modules from a pinned checkout (and builds `nvidia-fs`
@@ -207,7 +213,7 @@ kernel is never touched, so it's always the fallback.
 python -m pytest tests/ -q
 ```
 
-719 tests, about six seconds — mostly `hyphaed`'s own tooling invariants
+751 tests, about six seconds — mostly `hyphaed`'s own tooling invariants
 (fragment wiring, patch-series consistency, cmdline composition, floor
 validation), not kernel behavior. `tests/kernel_runtime/` is different: it
 reads the currently *running* kernel back and checks whether each patch in
